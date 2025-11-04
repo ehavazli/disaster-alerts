@@ -6,4 +6,3 @@ Generated at: {{ generated_at }} (UTC)
 
 —
 You’re receiving this because your address is in the “{{ group }}” recipient group.
-To change thresholds or routing, edit config/thresholds.yaml or config/recipients.yaml.
