@@ -9,7 +9,8 @@ set -euo pipefail
 
 # --- Hardening / defaults ---
 umask 027
-export LANG=C.UTF-8 LC_ALL=C.UTF-8
+export LANG=C
+export LC_ALL=C
 
 # --- Resolve repo root & paths ---
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
