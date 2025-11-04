@@ -1,34 +1,39 @@
 #!/usr/bin/env bash
 # scripts/run.sh
-# Run one pipeline execution of disaster-alerts under the intended conda env.
-# Pass any CLI args through, e.g.:
-#   ./scripts/run.sh --dry-run --print-settings
+# Cron-friendly wrapper for one disaster-alerts pipeline execution (no locking).
+# Usage:
+#   ./scripts/run.sh --dry-run
+#   ./scripts/run.sh --print-settings
 
 set -euo pipefail
 
-# --- Resolve repo root ---
+# --- Hardening / defaults ---
+umask 027
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# --- Resolve repo root & paths ---
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export DISASTER_ALERTS_ROOT="${DISASTER_ALERTS_ROOT:-$ROOT}"
+LOG_DIR="$ROOT/logs"
+DATA_DIR="$ROOT/data"
+mkdir -p "$LOG_DIR" "$DATA_DIR"
 
-# Optional: override config dir via env before running (uncomment & edit if desired)
-# export DISASTER_ALERTS_CONFIG_DIR="$ROOT/config"
-
-# --- Load .env if present (exports YAGMAIL_USER / YAGMAIL_APP_PASSWORD etc.) ---
+# --- Load .env if present (exports YAGMAIL_* etc.) ---
 if [[ -f "$ROOT/.env" ]]; then
-  # shellcheck disable=SC1091
   set -a
+  # shellcheck disable=SC1090
   source "$ROOT/.env"
   set +a
 fi
 
-# --- Ensure data/logs directories exist (cron safety) ---
-mkdir -p "$ROOT/data" "$ROOT/logs"
+# --- Timestamped log (UTC) ---
+TS_UTC="$(date -u +'%Y%m%dT%H%M%SZ')"
+LOG_FILE="$LOG_DIR/run_${TS_UTC}.log"
 
-# --- Prefer conda env if available; otherwise fall back to system python ---
+# --- Runner helpers ---
 ENV_NAME="disaster-alerts"
 
 run_with_conda() {
-  # Initialize conda for this shell, if possible
   if command -v conda >/dev/null 2>&1; then
     # shellcheck disable=SC1091
     eval "$(conda shell.bash hook)"
@@ -48,14 +53,26 @@ run_with_system_python() {
   return 1
 }
 
-cd "$ROOT"
+# --- Execute with banners + tee to file ---
+{
+  echo "[$(date -u +'%F %TZ')] ===== disaster-alerts start ====="
+  echo "root=$DISASTER_ALERTS_ROOT | args=$*"
+  if [[ -n "${DISASTER_ALERTS_CONFIG_DIR:-}" ]]; then
+    echo "config_dir=$DISASTER_ALERTS_CONFIG_DIR"
+  fi
 
-if run_with_conda "$@"; then
-  exit 0
-elif run_with_system_python "$@"; then
-  exit 0
-else
-  echo "ERROR: Could not find conda env '$ENV_NAME' or a system 'python'." >&2
-  echo "       Create the env with:  conda env create -f environment.yml" >&2
-  exit 1
-fi
+  set +e
+  if run_with_conda "$@"; then
+    EC=0
+  elif run_with_system_python "$@"; then
+    EC=0
+  else
+    echo "ERROR: No conda env '$ENV_NAME' or system 'python' found."
+    echo "       Create the env with:  conda env create -f environment.yml"
+    EC=1
+  fi
+  set -e
+
+  echo "[$(date -u +'%F %TZ')] ===== disaster-alerts end (exit=$EC) ====="
+  exit "$EC"
+} 2>&1 | tee -a "$LOG_FILE"
