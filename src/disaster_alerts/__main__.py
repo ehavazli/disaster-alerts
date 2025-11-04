@@ -1,13 +1,5 @@
-# src/disaster_alerts/__main__.py
-"""
-Module entrypoint so `python -m disaster_alerts ...` works.
-
-Delegates to cli.main(argv) and exits with its return code.
-"""
-
+"""Module entrypoint to enable `python -m disaster_alerts`."""
 from __future__ import annotations
-
-import sys
 
 from .cli import main
 

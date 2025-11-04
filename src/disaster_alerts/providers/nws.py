@@ -1,84 +1,119 @@
-# src/disaster_alerts/providers/nws.py
-"""
-NWS Alerts provider.
-
-Fetches active NWS alerts via api.weather.gov and maps them to the internal
-Event shape consumed by the pipeline.
-
-Notes
------
-- We fetch *active* alerts and let `rules.py` handle AOI filtering.
-- Some alerts lack numeric thresholds; we still include them and rely on
-  `rules.py` to be permissive for weather unless numeric values are present.
-- Fields used:
-    id            -> stable event id (feature.id or properties.id)
-    updated       -> properties.effective or properties.onset or properties.sent
-    title         -> properties.headline or properties.event
-    severity      -> properties.severity
-    link          -> properties.url or first entry in properties.references
-    geometry      -> feature.geometry
-    properties    -> whole properties dict (for optional metrics)
-"""
-
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
 
-from .common import get_json
 from ..settings import Settings
+from .common import get_json
 
-log = logging.getLogger("providers.nws")
+log = logging.getLogger(__name__)
 
 Event = Dict[str, Any]
+NWS_ACTIVE_URL = "https://api.weather.gov/alerts/active"
 
 
-def _pick(d: Dict[str, Any], *keys: str) -> Optional[str]:
+def _pick_str(d: Dict[str, Any], *keys: str) -> Optional[str]:
+    """Return the first non-empty string value for any of keys in dict d."""
     for k in keys:
         v = d.get(k)
-        if isinstance(v, str) and v:
-            return v
+        if isinstance(v, str) and v.strip():
+            return v.strip()
     return None
 
 
-def fetch_events(settings: Settings) -> List[Event]:
-    url = "https://api.weather.gov/alerts/active"
-    # We could add params like status=actual;area=... but we rely on AOI later
-    data = get_json(url)
+def _preferred_link(feature: Dict[str, Any], props: Dict[str, Any]) -> Optional[str]:
+    """
+    Choose the most useful link for an alert.
 
+    Preference:
+    1) feature["id"] (NWS Feature URL)
+    2) props["id"] / props["@id"] (also often a URL)
+    3) props["url"] (sometimes present)
+    4) fall back to first "references" URL if present
+    """
+    # 1–3
+    link = (
+        _pick_str(feature, "id")
+        or _pick_str(props, "id", "@id")
+        or _pick_str(props, "url")
+    )
+    if link:
+        return link
+
+    # 4) references can be a list of dicts or strings
+    refs = props.get("references")
+    if isinstance(refs, list) and refs:
+        first = refs[0]
+        if isinstance(first, str):
+            return first.strip() or None
+        if isinstance(first, dict):
+            # Some shapes: {"identifier": "...", "sender": "...", "url": "..."}
+            return _pick_str(first, "url", "identifier")
+    return None
+
+
+def _severity(props: Dict[str, Any]) -> Optional[str]:
+    s = props.get("severity")
+    return s if isinstance(s, str) and s.strip() else None
+
+
+def _updated(props: Dict[str, Any]) -> Optional[str]:
+    # Prefer effective/onset/sent. 'updated' and 'ends' are last-resort
+    return _pick_str(props, "effective", "onset", "sent", "updated", "ends")
+
+
+def fetch_events(settings: Settings) -> List[Event]:
+    """
+    Fetch all active NWS alerts and normalize them into Event dicts.
+    Returns an empty list on failure.
+    """
+    data = get_json(NWS_ACTIVE_URL)
     feats = data.get("features") or []
     if not isinstance(feats, list):
+        log.warning("NWS response missing 'features' list")
         return []
 
     out: List[Event] = []
     for f in feats:
         try:
+            if not isinstance(f, dict):
+                continue
             props = f.get("properties") or {}
-            fid = f.get("id") or props.get("id") or props.get("@id")
-            if not isinstance(fid, str):
-                # Construct a fallback id from a couple of fields if necessary
-                fid = str(props.get("id") or props.get("event") or props.get("headline") or "nws-unknown")
+            if not isinstance(props, dict):
+                props = {}
 
-            updated = _pick(props, "effective", "onset", "sent", "updated", "ends")
-            title = _pick(props, "headline", "event") or "(NWS Alert)"
-            severity = props.get("severity") if isinstance(props.get("severity"), str) else None
-            link = _pick(props, "url")
+            fid = (
+                _pick_str(f, "id")
+                or _pick_str(props, "id", "@id")
+                or _pick_str(props, "event", "headline")
+                or "nws-unknown"
+            )
+
+            title = _pick_str(props, "headline", "event") or "(NWS Alert)"
+            sev = _severity(props)
+            link = _preferred_link(f, props)
 
             ev: Event = {
                 "id": fid,
                 "provider": "nws",
-                "updated": updated,
+                "updated": _updated(props),
                 "title": title,
-                "severity": severity,
+                "severity": sev,
                 "link": link,
                 "geometry": f.get("geometry"),
-                "properties": props,
-                # Optional: route severe alerts differently, else default
-                "routing_key": "severe" if (severity or "").lower() in {"severe", "extreme"} else "default",
+                "properties": props,  # keep full properties for downstream formatting
+                # Pipeline may override routing later; still set a sensible default.
+                "routing_key": (
+                    "severe"
+                    if (sev or "").lower() in {"severe", "extreme"}
+                    else "default"
+                ),
             }
             out.append(ev)
         except Exception as e:
-            log.debug("Skipping malformed NWS feature: %s", e)
+            # Keep this quiet (debug) so a single malformed feature doesn't spam logs.
+            log.debug("Skipping malformed NWS feature: %s", e, exc_info=False)
             continue
 
+    log.info("NWS: normalized %d active alert(s)", len(out))
     return out

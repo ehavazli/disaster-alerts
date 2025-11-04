@@ -1,24 +1,26 @@
-# src/disaster_alerts/settings.py
-"""
-Central configuration loader for disaster-alerts.
-
-Upgrades in this version:
-- Stricter schemas for thresholds/recipients
-- AOI (GeoJSON) validation (Polygon/MultiPolygon)
-- Log-level normalization + validation
-- Config directory override via DISASTER_ALERTS_CONFIG_DIR
-- Helpful, explicit errors for common misconfigurations
-"""
-
 from __future__ import annotations
 
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+__all__ = [
+    "EmailConfig",
+    "ProvidersConfig",
+    "RoutingConfig",
+    "GlobalThresholds",
+    "EarthquakeThresholds",
+    "WeatherThresholds",
+    "Thresholds",
+    "Recipients",
+    "Paths",
+    "AppConfig",
+    "Settings",
+]
 
 # ---------- tiny .env loader (opt-in, no external dependency) ----------
 
@@ -29,9 +31,7 @@ def _load_dotenv(dotenv_path: Path) -> None:
         return
     for line in dotenv_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
+        if not line or line.startswith("#") or "=" not in line:
             continue
         key, val = line.split("=", 1)
         key = key.strip()
@@ -44,7 +44,6 @@ def _load_dotenv(dotenv_path: Path) -> None:
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 _EMAIL_RE = re.compile(
-    # super-lightweight email check (good enough for config validation)
     r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"
 )
 
@@ -95,7 +94,7 @@ def _validate_geojson_polygon(coords: Any) -> bool:
         return False
     if not all(_is_number_pair(pt) for pt in outer):
         return False
-    # (Optional) outer ring closed check (first == last)
+    # Optionally ensure ring closure; most APIs give closed rings already.
     return True
 
 
@@ -151,13 +150,18 @@ class GlobalThresholds(BaseModel):
 
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     log_level: str = Field(default="INFO", description="Python logging level")
+    display_timezone: Optional[str] = Field(
+        default=None,
+        description="IANA tz name used when rendering email times (e.g., 'America/Los_Angeles')",
+    )
     aoi: Optional[Dict[str, Any]] = Field(
         default=None, description="GeoJSON Polygon/MultiPolygon"
     )
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
-    routing: RoutingConfig = Field(default_factory=RoutingConfig)   # <-- NEW
-
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
     @field_validator("log_level")
     @classmethod
@@ -214,8 +218,8 @@ class EarthquakeThresholds(BaseModel):
 class WeatherThresholds(BaseModel):
     wind_gust_mps: Optional[float] = None
     rainfall_mm_hr: Optional[float] = None
-    include_events: List[str] = []
-    exclude_events: List[str] = []
+    include_events: List[str] = Field(default_factory=list)
+    exclude_events: List[str] = Field(default_factory=list)
 
     @field_validator("wind_gust_mps", "rainfall_mm_hr")
     @classmethod
@@ -238,7 +242,6 @@ class Recipients(BaseModel):
     """Mapping of routing keys → recipient lists (emails)."""
 
     model_config = ConfigDict(extra="allow")
-    # We don't know keys ahead of time; validate values en masse
 
     @classmethod
     def from_raw(cls, raw: Dict[str, Any]) -> "Recipients":
@@ -270,7 +273,6 @@ class Recipients(BaseModel):
                     ],
                 )
         obj = cls()
-        # attach as attributes to keep dot-access (optional)
         for k, v in raw.items():
             setattr(obj, k, v)
         return obj
@@ -321,7 +323,7 @@ class Settings(BaseModel):
         """
         # Determine repo root
         inferred_root = Path(os.environ.get("DISASTER_ALERTS_ROOT", "")).expanduser()
-        if not inferred_root:
+        if not str(inferred_root):
             # src/disaster_alerts/settings.py -> project root is parents[2]
             inferred_root = Path(__file__).resolve().parents[2]
         base_root = root or inferred_root
@@ -354,7 +356,7 @@ class Settings(BaseModel):
         if not app_path.exists():
             raise RuntimeError(
                 f"Missing required config: {app_path}. "
-                "Generate it from the repository template under config/app.yaml."
+                "Copy the template under config/app.yaml."
             )
         app_yaml = _read_yaml(app_path)
         thresholds_yaml = _read_yaml(config_dir / "thresholds.yaml")
@@ -396,7 +398,7 @@ class Settings(BaseModel):
 
     @property
     def enabled_providers(self) -> List[str]:
-        enabled = []
+        enabled: List[str] = []
         if self.app.providers.nws:
             enabled.append("nws")
         if self.app.providers.usgs:

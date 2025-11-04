@@ -1,25 +1,3 @@
-# src/disaster_alerts/cli.py
-"""
-Command-line entrypoint for disaster-alerts.
-
-Goals
------
-- Zero-config happy path: `python -m disaster_alerts` just runs the pipeline.
-- Useful flags:
-    --config-dir PATH      Override ./config (also via DISASTER_ALERTS_CONFIG_DIR)
-    --root PATH            Override repo root (also via DISASTER_ALERTS_ROOT)
-    --dry-run              Run full pipeline but DO NOT send emails
-    --print-settings       Dump effective settings (redact secrets) and exit
-    --version              Print version and exit
-- Clear, friendly errors suitable for cron logs.
-
-Exit codes
-----------
-0  success (no exceptions; even if 0 events)
-1  configuration error (missing/invalid config or email creds when needed)
-2  runtime/provider error
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -28,18 +6,18 @@ import os
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 try:
     from . import __version__ as PKG_VERSION  # type: ignore
 except Exception:
-    PKG_VERSION = None  # falls back to "0.0.0" when printing --version
+    PKG_VERSION = None  # falls back to "0.0.0"
 
 from . import pipeline
 from .settings import Settings
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
+def _parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="disaster-alerts",
         description="Cron-friendly alerts from NWS/USGS with yagmail notifications.",
@@ -53,6 +31,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--root",
         type=Path,
         help="Override repo root (default: inferred from package or $DISASTER_ALERTS_ROOT)",
+    )
+    p.add_argument(
+        "--dotenv",
+        type=Path,
+        help="Path to a .env file to load (default: <root>/.env).",
     )
     p.add_argument(
         "--dry-run",
@@ -73,7 +56,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def _redact(obj: Dict[str, Any]) -> Dict[str, Any]:
-    # Deep copy without JSON (handles Path, etc.)
     out = deepcopy(obj)
     email = out.get("email")
     if isinstance(email, dict) and email.get("app_password"):
@@ -81,9 +63,8 @@ def _redact(obj: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _as_dict(settings: "Settings") -> Dict[str, Any]:
+def _as_dict(settings: Settings) -> Dict[str, Any]:
     def conv(v: Any) -> Any:
-        # Order matters: handle Path first, then containers, then models.
         if isinstance(v, Path):
             return str(v)
         if isinstance(v, list):
@@ -93,22 +74,28 @@ def _as_dict(settings: "Settings") -> Dict[str, Any]:
         # pydantic v2 models
         try:
             dumped = v.model_dump()  # type: ignore[attr-defined]
-            return conv(dumped)  # <— recurse to convert Paths inside
+            return conv(dumped)
         except Exception:
             return v
+
+    # Recipients is a flexible model; strip private attrs before dumping.
+    recipients_public = {
+        k: v
+        for k, v in getattr(settings.recipients, "__dict__", {}).items()
+        if not k.startswith("_")
+    }
 
     return {
         "paths": conv(settings.paths),
         "app": conv(settings.app),
         "thresholds": conv(settings.thresholds),
-        # Recipients is a pydantic-like object; convert its __dict__ then recurse
-        "recipients": conv(settings.recipients.__dict__),
+        "recipients": conv(recipients_public),
         "email": conv(settings.email),
         "enabled_providers": settings.enabled_providers,
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     ns = _parse_args(argv or sys.argv[1:])
 
     if ns.version:
@@ -126,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = Settings.load(
             root=ns.root.expanduser() if ns.root else None,
+            dotenv=ns.dotenv.expanduser() if ns.dotenv else None,
         )
     except Exception as e:
         print(f"[config] {e}", file=sys.stderr)
@@ -142,26 +130,23 @@ def main(argv: list[str] | None = None) -> int:
 
         real_send = email_mod.send
 
-        def _noop_send(settings, recipients, subject, html_body, text_body):
+        def _noop_send(_settings, recipients, subject, _html_body, text_body):
             print("[dry-run] would send to:", ", ".join(recipients))
             print("[dry-run] subject:", subject)
+            preview = text_body[:200].replace("\n", " ")
             print("[dry-run] text preview (first 200 chars):")
-            print(
-                text_body[:200].replace("\n", " ")
-                + ("..." if len(text_body) > 200 else "")
-            )
+            print(preview + ("..." if len(text_body) > 200 else ""))
             return None
 
         email_mod.send = _noop_send  # type: ignore[assignment]
         try:
             count = pipeline.run(settings)
         except Exception as e:
-            # restore and re-raise path
-            email_mod.send = real_send  # type: ignore[assignment]
+            email_mod.send = real_send  # restore before exiting
             print(f"[runtime] {e}", file=sys.stderr)
             return 2
         finally:
-            email_mod.send = real_send  # type: ignore[assignment]
+            email_mod.send = real_send
         return 0
 
     # Normal run
