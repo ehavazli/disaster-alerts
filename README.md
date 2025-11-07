@@ -116,7 +116,7 @@ Tips:
 
 ---
 
-## ⚙️ Configuration reference
+## Configuration reference
 
 ### USGS
 - Typical filters: `min_magnitude`, `time_window`, `aoi`
