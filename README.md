@@ -46,15 +46,11 @@ conda env create -f environment.yml
 conda activate disaster-alerts
 ```
 
-Or with Python venv:
+Then you can make an editable install using:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
+pip install -e .
 ```
-
-> If you use `uv`: `uv venv && source .venv/bin/activate && uv pip install -e .[dev]`
 
 ### 2. Configure SMTP & secrets
 
