@@ -116,10 +116,9 @@ Tips:
 
 ### USGS
 - Typical filters: `min_magnitude`, `max_depth_km`
-- Normalized event fields include: `id`, `title`, `magnitude`, `depth_km`, `coordinates`, `updated`, `link`
 
 ### NWS
-- Typical filters: allowed product types (e.g., *Severe Thunderstorm Warning*, *Flash Flood Warning*, etc.), `aoi`
+- Typical filters: allowed product types (e.g., *Severe Thunderstorm Warning*, *Flash Flood Warning*, etc. see [list](https://github.com/ehavazli/disaster-alerts/blob/main/config/nws_events_list.json)), `aoi`
 - Shapes may be polygons or county/zone references
 
 ### Recipients
