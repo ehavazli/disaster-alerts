@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +53,68 @@ def _is_newer(a: Optional[str], b: Optional[str]) -> bool:
     if db is None:
         return True
     return da > db
+
+
+def _iter_lon_lat(coords: Any):
+    """Yield (lon, lat) pairs from GeoJSON-style coordinates.
+
+    Supports:
+      - Point: [lon, lat, ...]
+      - Polygon: [[[lon, lat, ...], ...], ...]
+      - MultiPolygon: [[[[lon, lat, ...], ...], ...], ...]
+    """
+    if not isinstance(coords, list):
+        return
+
+    # Point: [lon, lat] or [lon, lat, z]
+    if coords and isinstance(coords[0], (int, float)):
+        if len(coords) >= 2:
+            yield float(coords[0]), float(coords[1])
+        return
+
+    # Nested lists (Polygon rings, MultiPolygon, etc.)
+    for item in coords:
+        if isinstance(item, list):
+            if item and isinstance(item[0], (int, float)):
+                if len(item) >= 2:
+                    yield float(item[0]), float(item[1])
+            else:
+                for lon, lat in _iter_lon_lat(item):
+                    yield lon, lat
+
+
+def _geom_bbox_signature(event: Dict[str, Any]) -> Optional[str]:
+    """Compute a stable bbox signature string for the event geometry.
+
+    Returns:
+      "lon_min,lat_min,lon_max,lat_max" (rounded to 4 decimals),
+      or None if geometry is missing or cannot be parsed.
+    """
+    geom = event.get("geometry")
+    if not isinstance(geom, dict):
+        return None
+
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    if gtype not in ("Point", "Polygon", "MultiPolygon"):
+        return None
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for lon, lat in _iter_lon_lat(coords):
+        xs.append(lon)
+        ys.append(lat)
+
+    if not xs or not ys:
+        return None
+
+    lon_min = min(xs)
+    lon_max = max(xs)
+    lat_min = min(ys)
+    lat_max = max(ys)
+
+    # Round to avoid tiny float jitter; adjust precision as needed
+    return f"{lon_min:.4f},{lat_min:.4f},{lon_max:.4f},{lat_max:.4f}"
 
 
 # --------------------------- core types ---------------------------
@@ -163,26 +225,37 @@ class State:
         Return True if event has not been seen before.
 
         Criteria:
-          1) Event id not in provider LRU list
-          2) Watermark is advisory only; we still check ids to allow late arrivals
+          1) Event id + geometry bbox signature not in provider LRU list
+          2) If geometry is missing/unusable, fall back to plain id
+          3) Watermark is advisory only; we still check ids to allow late arrivals
         """
         provider = str(event.get("provider") or "").strip() or "unknown"
-        eid = str(event.get("id") or "").strip()
-        if not eid:
+        base_id = str(event.get("id") or "").strip()
+        if not base_id:
             # If an event has no id, treat as notifiable (cannot dedup safely)
             return True
+
+        sig = _geom_bbox_signature(event)
+        eid = f"{base_id}|{sig}" if sig else base_id
+
         return eid not in self._prov(provider).ids
 
     def update_with(self, events: List[Dict[str, Any]]) -> None:
         """
         Update internal state with a batch of events that were notified:
-        - Adds each event id to provider LRU
+        - Adds each event id + geometry bbox signature to provider LRU
         - Advances provider last_updated to the max 'updated' in the batch
         """
         per_provider_max_updated: Dict[str, Optional[str]] = {}
         for e in events:
             provider = str(e.get("provider") or "").strip() or "unknown"
-            eid = str(e.get("id") or "").strip()
+            base_id = str(e.get("id") or "").strip()
+            if not base_id:
+                # Cannot track dedup for events without ids
+                continue
+
+            sig = _geom_bbox_signature(e)
+            eid = f"{base_id}|{sig}" if sig else base_id
             updated = e.get("updated") if isinstance(e.get("updated"), str) else None
 
             self._prov(provider).add_id(eid, self.lru_limit)
