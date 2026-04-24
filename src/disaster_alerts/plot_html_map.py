@@ -394,6 +394,16 @@ def _generate_events_html_map(
                 var currentBboxLayer = null;
                 var justDrawn = false;
 
+                function updateCurrentBboxFromLayer(layer) {
+                    var bounds = layer.getBounds();
+                    currentBbox = {
+                        lat_min: bounds.getSouth(),
+                        lat_max: bounds.getNorth(),
+                        lon_min: bounds.getWest(),
+                        lon_max: bounds.getEast()
+                    };
+                }
+
                 // ---- Custom multi-select dropdown logic ----
                 function setupMultiDropdown(btnId, listId, allValue, defaultLabel) {
                     var btn = document.getElementById(btnId);
@@ -479,15 +489,26 @@ def _generate_events_html_map(
                     }
                     currentBboxLayer = e.layer;
                     currentBboxLayer.addTo({{this._parent.get_name()}});
-                    var bounds = currentBboxLayer.getBounds();
-                    currentBbox = {
-                        lat_min: bounds.getSouth(),
-                        lat_max: bounds.getNorth(),
-                        lon_min: bounds.getWest(),
-                        lon_max: bounds.getEast()
-                    };
+                    updateCurrentBboxFromLayer(currentBboxLayer);
                     justDrawn = true;
                     console.log("Bounding box ready.");
+                });
+
+                {{this._parent.get_name()}}.on('draw:editmove', function(e) {
+                    currentBboxLayer = e.layer;
+                    updateCurrentBboxFromLayer(currentBboxLayer);
+                });
+
+                {{this._parent.get_name()}}.on('draw:editresize', function(e) {
+                    currentBboxLayer = e.layer;
+                    updateCurrentBboxFromLayer(currentBboxLayer);
+                });
+
+                {{this._parent.get_name()}}.on('draw:edited', function(e) {
+                    e.layers.eachLayer(function(layer) {
+                        currentBboxLayer = layer;
+                        updateCurrentBboxFromLayer(currentBboxLayer);
+                    });
                 });
 
                 {{this._parent.get_name()}}.on('click', function() {
