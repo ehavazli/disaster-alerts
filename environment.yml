@@ -14,5 +14,17 @@ dependencies:
   - shapely
   - folium
   - pip
+  - asf_search
+  - beautifulsoup4
+  - boto3
+  - earthaccess
+  - jupyterlab
+  - leafmap
+  - lxml
+  - rasterio
+  - tabulate
+  - openpyxl>=3.1.0
+  - timezonefinder
   - pip:
       - yagmail
+      - git+https://github.com/OPERA-Cal-Val/next_pass.git@main

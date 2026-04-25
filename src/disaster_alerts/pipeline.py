@@ -5,8 +5,8 @@ from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Tuple
 
 from . import email as _email
-from . import rules as _rules
 from . import plot_html_map as _plot_html_map
+from . import rules as _rules
 from .providers import fetch_from_enabled as _fetch_from_enabled
 from .settings import Settings, Thresholds
 from .state import State as _State
@@ -71,9 +71,9 @@ def _only_new(events: List[Event], state: _State) -> List[Event]:
 
 # ------------------------ routing & email ------------------------
 
+
 def _group_by_routing_key(
-    events: Iterable[Event],
-    settings: Settings
+    events: Iterable[Event], settings: Settings
 ) -> Dict[str, List[Event]]:
     """
     Group events by routing key, applying routing rules:
@@ -122,8 +122,7 @@ def _group_by_routing_key(
 
 
 def _group_by_event_type(
-    events: Iterable[Event],
-    settings: Settings
+    events: Iterable[Event], settings: Settings
 ) -> Dict[str, List[Event]]:
     """
     Group events by e['properties']['event'], applying routing rules:
@@ -233,6 +232,8 @@ def run(settings: Settings) -> int:
     Order:
       1) fetch from enabled providers
       2) filter by rules (global severity, provider thresholds, AOI)
+      3) generate html map of events if enabled (before dedup to show all fetched events)
+      else if settings.app.no_html
       3) dedup against state (non-mutating)
       4) group by routing key (force/merge/drop)
       5) email each group
@@ -255,45 +256,45 @@ def run(settings: Settings) -> int:
     # 3) generate html map of events if enabled
     if not (settings.app.no_html):
         try:
-            events = _plot_html_map._add_aoi_to_events(
-                events, settings.paths.data_dir)
+            events = _plot_html_map._add_aoi_to_events(events, settings.paths.data_dir)
             grouped_for_map = _group_by_event_type(events, settings)
             _plot_html_map._generate_events_html_map(
-                settings,
-                grouped_for_map,
-                settings.paths.data_dir)
+                settings, grouped_for_map, settings.paths.data_dir
+            )
         except Exception as e:
             log.error("Failed to generate events HTML map: %s", e)
+    else:
+        # 3) dedup (do not update state yet—only after successful sends)
+        state = _State.load(settings.paths.state_file)
+        events = _only_new(events, state)
+        if not events:
+            log.info("No new events after deduplication.")
+            return 0
 
-    # 4) dedup (do not update state yet—only after successful sends)
-    state = _State.load(settings.paths.state_file)
-    events = _only_new(events, state)
-    if not events:
-        log.info("No new events after deduplication.")
-        return 0
+        # 4) route
+        grouped = _group_by_routing_key(events, settings)
+        if not grouped:
+            log.info("No routable groups after routing rules.")
+            return 0
 
-    # 5) route
-    grouped = _group_by_routing_key(events, settings)
-    if not grouped:
-        log.info("No routable groups after routing rules.")
-        return 0
+        # 5) email
+        try:
+            groups_sent, events_notified, sent_events = _dispatch_emails(
+                settings, grouped
+            )
+        except RuntimeError as e:
+            # Likely missing email credentials; surface clearly
+            log.error("Notification failed: %s", e)
+            raise
 
-    # 6) email
-    try:
-        groups_sent, events_notified, sent_events = _dispatch_emails(settings, grouped)
-    except RuntimeError as e:
-        # Likely missing email credentials; surface clearly
-        log.error("Notification failed: %s", e)
-        raise
+        # 6) persist state (only for events we actually attempted to send)
+        if sent_events:
+            state.update_with(sent_events)
+            state.save()
 
-    # 6) persist state (only for events we actually attempted to send)
-    if sent_events:
-        state.update_with(sent_events)
-        state.save()
-
-    log.info(
-        "Pipeline completed: %d group(s) emailed, %d event(s) notified.",
-        groups_sent,
-        events_notified,
-    )
-    return events_notified
+        log.info(
+            "Pipeline completed: %d group(s) emailed, %d event(s) notified.",
+            groups_sent,
+            events_notified,
+        )
+        return events_notified
