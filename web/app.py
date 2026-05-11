@@ -1,9 +1,12 @@
 import glob
+import html
 import logging
 import os
 import subprocess
 import sys
 import threading
+import time
+import uuid
 
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
@@ -18,24 +21,84 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 HTML_FILE = "activated_events_map.html"
 BASE_OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-# Shared state
-processing_state = {
-    "running": False,
-    "latest_folder": None,
-    "error": None,
-    "search_type": None,
-}
+processing_runs = {}
+processing_runs_lock = threading.Lock()
 
 
-def run_next_pass(params):
+def _list_output_folders():
+    return sorted(
+        glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+
+
+def _create_run(search_type):
+    run_id = uuid.uuid4().hex
+    run_state = {
+        "running": True,
+        "latest_folder": None,
+        "error": None,
+        "search_type": search_type or "both",
+        "started_at": time.time(),
+        "known_folders": set(_list_output_folders()),
+    }
+    with processing_runs_lock:
+        processing_runs[run_id] = run_state
+    return run_id
+
+
+def _get_run_state(run_id):
+    if not run_id:
+        return None
+    with processing_runs_lock:
+        run_state = processing_runs.get(run_id)
+        if run_state is None:
+            return None
+        return dict(run_state)
+
+
+def _update_run_state(run_id, **updates):
+    with processing_runs_lock:
+        run_state = processing_runs.get(run_id)
+        if run_state is None:
+            return
+        run_state.update(updates)
+
+
+def _find_run_output_folder(before_folders, started_at):
+    candidate_folders = _list_output_folders()
+    new_folders = [folder for folder in candidate_folders if folder not in before_folders]
+    if new_folders:
+        recent_new_folders = [
+            folder
+            for folder in new_folders
+            if os.path.getmtime(folder) >= (started_at - 1)
+        ]
+        if recent_new_folders:
+            new_folders = recent_new_folders
+        return max(new_folders, key=os.path.getmtime)
+
+    recent_folders = [
+        folder
+        for folder in candidate_folders
+        if os.path.getmtime(folder) >= (started_at - 1)
+    ]
+    if recent_folders:
+        return max(recent_folders, key=os.path.getmtime)
+
+    return None
+
+
+def run_next_pass(run_id, params):
     """
     Builds the command line arguments based on the dashboard panel selections
     and executes the next_pass.py script.
     """
-    processing_state["running"] = True
-    processing_state["latest_folder"] = None
-    processing_state["error"] = None
-    processing_state["search_type"] = params.get("search_type", "both")
+    run_state = _get_run_state(run_id)
+    if run_state is None:
+        return
+
     try:
         # 1) Base command with Bounding Box
         cmd = [
@@ -82,20 +145,22 @@ def run_next_pass(params):
         print("Executing command:", " ".join(cmd))
         subprocess.run(cmd, check=True, cwd=BASE_OUTPUT_DIR)
 
-        # Find latest output folder
-        folders = sorted(
-            glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*")),
-            key=os.path.getmtime,
-            reverse=True,
+        output_folder = _find_run_output_folder(
+            run_state["known_folders"], run_state["started_at"]
         )
-        if folders:
-            processing_state["latest_folder"] = folders[0]
-            print(f"Success! Output folder: {folders[0]}")
+        if output_folder:
+            _update_run_state(run_id, latest_folder=output_folder)
+            print(f"Success! Output folder: {output_folder}")
+        else:
+            _update_run_state(
+                run_id,
+                error="Processing finished, but no output folder could be matched to this run.",
+            )
     except Exception as e:
-        processing_state["error"] = str(e)
+        _update_run_state(run_id, error=str(e))
         print(f"Error running next_pass: {e}")
     finally:
-        processing_state["running"] = False
+        _update_run_state(run_id, running=False)
 
 
 # ---- Serve original map ----
@@ -127,25 +192,35 @@ def process_bbox():
 
     # Passing 'data' dictionary ensures run_next_pass gets satellites,
     # products, etc.
-    threading.Thread(target=run_next_pass, args=(data,)).start()
-    return jsonify({"status": "processing started"})
+    run_id = _create_run(data.get("search_type"))
+    threading.Thread(target=run_next_pass, args=(run_id, data), daemon=True).start()
+    return jsonify({"status": "processing started", "run_id": run_id})
 
 
 # ---- Status endpoint ----
 @app.route("/processing_status")
 def processing_status():
+    run_id = request.args.get("run_id")
+    run_state = _get_run_state(run_id)
+    if run_state is None:
+        return jsonify({"error": "Unknown or missing run_id"}), 404
+
     return jsonify(
         {
-            "running": processing_state["running"],
-            "error": processing_state["error"],
+            "running": run_state["running"],
+            "error": run_state["error"],
         }
     )
 
 
 # ---- Serve maps from latest next-pass folder ----
-@app.route("/maps/<filename>")
-def maps(filename):
-    folder = processing_state.get("latest_folder")
+@app.route("/maps/<run_id>/<filename>")
+def maps(run_id, filename):
+    run_state = _get_run_state(run_id)
+    if run_state is None:
+        return f"Unknown run: {run_id}", 404
+
+    folder = run_state.get("latest_folder")
     if folder and os.path.exists(os.path.join(folder, filename)):
         return send_from_directory(folder, filename)
     return f"File {filename} not found", 404
@@ -157,13 +232,25 @@ def show_maps():
     Display run_output.txt first, then the maps below it.
     Shows a third DRCS map if opera_products_drcs_map.html was produced.
     """
-    folder = processing_state.get("latest_folder")
+    run_id = request.args.get("run_id")
+    run_state = _get_run_state(run_id)
+    if run_state is None:
+        return "<h3>No run selected. Start a search from the dashboard first.</h3>", 404
+
+    folder = run_state.get("latest_folder")
+    if run_state.get("running") and not folder:
+        return "<h3>This search is still processing. Please wait a moment and try again.</h3>"
+
+    if run_state.get("error"):
+        return f"<h3>Processing failed: {html.escape(run_state['error'])}</h3>", 500
+
     if not folder:
         return (
-            "<h3>No next-pass output yet. Draw a bounding box to start processing.</h3>"
+            "<h3>No next-pass output found for this search.</h3>",
+            404,
         )
 
-    search_type = processing_state.get("search_type", "both")
+    search_type = run_state.get("search_type", "both")
     sat_map = "satellite_overpasses_map.html"
     opera_map = "opera_products_map.html"
     drcs_map = "opera_products_drcs_map.html"
@@ -179,17 +266,17 @@ def show_maps():
     log_content = ""
     if os.path.exists(log_file):
         with open(log_file, "r") as f:
-            log_content = f.read()
+            log_content = html.escape(f.read())
 
     iframes = ""
     if show_sat:
-        iframes += f'<iframe src="/maps/{sat_map}"></iframe>'
+        iframes += f'<iframe src="/maps/{run_id}/{sat_map}"></iframe>'
     if show_opera:
-        iframes += f'<iframe src="/maps/{opera_map}"></iframe>'
+        iframes += f'<iframe src="/maps/{run_id}/{opera_map}"></iframe>'
     if show_drcs:
-        iframes += f'<iframe src="/maps/{drcs_map}"></iframe>'
+        iframes += f'<iframe src="/maps/{run_id}/{drcs_map}"></iframe>'
 
-    html = f"""
+    page_html = f"""
     <html>
       <head>
         <title>Next-Pass Results</title>
@@ -211,7 +298,7 @@ def show_maps():
       </body>
     </html>
     """
-    return render_template_string(html)
+    return render_template_string(page_html)
 
 
 if __name__ == "__main__":
