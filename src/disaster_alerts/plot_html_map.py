@@ -524,23 +524,35 @@ def _generate_events_html_map(
                         headers: {"Content-Type": "application/json"},
                         body: JSON.stringify(payload)
                     })
-                    .then(resp => resp.json())
+                    .then(resp => {
+                        if (!resp.ok) {
+                            throw new Error("Unable to start processing.");
+                        }
+                        return resp.json();
+                    })
                     .then(data => {
+                        if (!data.run_id) {
+                            throw new Error("Server did not return a run identifier.");
+                        }
                         alert("Search command sent. Processing...");
-                        checkStatus();
+                        checkStatus(data.run_id);
+                    })
+                    .catch(err => {
+                        alert("Unable to start processing: " + err.message);
                     });
                 };
 
-                function checkStatus() {
-                    fetch("/processing_status")
+                function checkStatus(runId) {
+                    fetch(`/processing_status?run_id=${encodeURIComponent(runId)}`)
                         .then(r => r.json())
                         .then(status => {
                             if (status.running) {
-                                setTimeout(checkStatus, 2000);
+                                setTimeout(() => checkStatus(runId), 2000);
                             } else if (status.error) {
                                 alert("Processing failed: " + status.error);
                             } else {
-                                window.location.href = "/show_maps";
+                                window.location.href =
+                                    `/show_maps?run_id=${encodeURIComponent(runId)}`;
                             }
                         });
                 }
