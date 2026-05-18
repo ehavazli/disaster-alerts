@@ -4,7 +4,7 @@ channels:
   - conda-forge
 channel_priority: strict
 dependencies:
-  - python>=3.11
+  - python>=3.12
   - flask
   - pydantic
   - pyyaml
@@ -21,10 +21,21 @@ dependencies:
   - jupyterlab
   - leafmap
   - lxml
+  - gdal
   - rasterio
   - tabulate
   - openpyxl>=3.1.0
   - timezonefinder
+  - matplotlib
+  - numpy
+  - pandas
+  - pyproj
+  - pygmt
+  - rioxarray<0.20.0
+  - xarray
+  - click
   - pip:
       - yagmail
       - git+https://github.com/OPERA-Cal-Val/next_pass.git@main
+      - opera-utils==0.25.3
+      - git+https://github.com/OPERA-Cal-Val/disasters.git@main

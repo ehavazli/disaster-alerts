@@ -1,13 +1,18 @@
+import os
+
+os.environ.setdefault("PANDAS_FUTURE_INFER_STRING", "0")
+
 import glob
 import html
 import logging
-import os
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 
+from disasters.pipeline import PipelineConfig, run_pipeline
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 print("Flask is running with Python:", sys.executable)
@@ -39,7 +44,7 @@ def _create_run(search_type):
         "running": True,
         "latest_folder": None,
         "error": None,
-        "search_type": search_type or "both",
+        "search_type": search_type or ["opera_search"],
         "started_at": time.time(),
         "known_folders": set(_list_output_folders()),
     }
@@ -68,7 +73,9 @@ def _update_run_state(run_id, **updates):
 
 def _find_run_output_folder(before_folders, started_at):
     candidate_folders = _list_output_folders()
-    new_folders = [folder for folder in candidate_folders if folder not in before_folders]
+    new_folders = [
+        folder for folder in candidate_folders if folder not in before_folders
+    ]
     if new_folders:
         recent_new_folders = [
             folder
@@ -93,7 +100,7 @@ def _find_run_output_folder(before_folders, started_at):
 def run_next_pass(run_id, params):
     """
     Builds the command line arguments based on the dashboard panel selections
-    and executes the next_pass.py script.
+    and executes the next_pass module.
     """
     run_state = _get_run_state(run_id)
     if run_state is None:
@@ -112,18 +119,26 @@ def run_next_pass(run_id, params):
             str(params["lon_max"]),
         ]
 
-        # 2) Add Search Type (-f)
-        if params.get("search_type"):
-            cmd += ["-f", params["search_type"]]
+        # 2) Derive -f flag from multi-select list
+        search_type = params.get("search_type", ["opera_search"])
+        if isinstance(search_type, str):
+            search_type = [search_type]
+        has_overpasses = "overpasses" in search_type
+        has_opera = "opera_search" in search_type
+        if has_overpasses and has_opera:
+            functionality = "both"
+        elif has_overpasses:
+            functionality = "overpasses"
+        else:
+            functionality = "opera_search"
+        cmd += ["-f", functionality]
 
-        # 3) Add Satellites (-s) - Allows multiple values
+        # 3) Add Satellites (-s)
         if params.get("satellites"):
             cmd.append("-s")
-            # If 'all' is selected, you might want to handle it specifically
-            # or just pass it if the script handles 'all'
             cmd.extend(params["satellites"])
 
-        # 4) Add Products (-p) - Allows multiple values; skip entirely if "all" selected
+        # 4) Add Products (-p); skip entirely if "all" selected
         products = params.get("products", [])
         if products and "all" not in products:
             cmd.append("-p")
@@ -133,8 +148,7 @@ def run_next_pass(run_id, params):
         if params.get("lookback") and str(params["lookback"]).isdigit():
             cmd += ["-k", str(params["lookback"])]
 
-        # 6) Add Event Date (-g)
-        # Logic: only add if DRCS is 'yes' and a valid date is provided
+        # 6) Add Event Date (-g); only if DRCS is enabled and date is valid
         if params.get("drcs") == "yes" and params.get("event_date") not in [
             None,
             "N/A",
@@ -154,11 +168,74 @@ def run_next_pass(run_id, params):
         else:
             _update_run_state(
                 run_id,
-                error="Processing finished, but no output folder could be matched to this run.",
+                error=(
+                    "Processing finished, but no output folder could be matched to this"
+                    " run."
+                ),
             )
     except Exception as e:
         _update_run_state(run_id, error=str(e))
         print(f"Error running next_pass: {e}")
+    finally:
+        _update_run_state(run_id, running=False)
+
+
+def run_disasters(run_id, params):
+    """
+    Runs the full disasters pipeline (search + mosaic + layouts).
+    """
+    run_state = _get_run_state(run_id)
+    if run_state is None:
+        return
+
+    try:
+        bbox = [
+            float(params["lat_min"]),
+            float(params["lat_max"]),
+            float(params["lon_min"]),
+            float(params["lon_max"]),
+        ]
+
+        number_of_dates = 5
+        if params.get("lookback") and str(params["lookback"]).isdigit():
+            number_of_dates = int(params["lookback"])
+
+        search_type = params.get("search_type", ["opera_search"])
+        if isinstance(search_type, str):
+            search_type = [search_type]
+
+        config = PipelineConfig(
+            bbox=bbox,
+            output_dir=Path(BASE_OUTPUT_DIR),
+            layout_title=(
+                f"Disaster Analysis ({bbox[0]},{bbox[2]} – {bbox[1]},{bbox[3]})"
+            ),
+            date=None,
+            number_of_dates=number_of_dates,
+            mode=params.get("mode", "flood"),
+            functionality="both" if "all" in search_type else "opera_search",
+        )
+
+        print(f"Running disasters pipeline: mode={config.mode}, bbox={config.bbox}")
+        run_pipeline(config)
+
+        output_folder = _find_run_output_folder(
+            run_state["known_folders"], run_state["started_at"]
+        )
+        if output_folder:
+            _update_run_state(run_id, latest_folder=output_folder)
+            print(f"Success! Output folder: {output_folder}")
+        else:
+            _update_run_state(
+                run_id,
+                error=(
+                    "Processing finished, but no output folder could be matched to this"
+                    " run."
+                ),
+            )
+    except Exception as e:
+        _update_run_state(run_id, error=str(e))
+        print(f"Error running disasters pipeline: {e}")
     finally:
         _update_run_state(run_id, running=False)
 
@@ -190,10 +267,13 @@ def process_bbox():
         f" {data.get('lon_min')}"
     )
 
-    # Passing 'data' dictionary ensures run_next_pass gets satellites,
-    # products, etc.
-    run_id = _create_run(data.get("search_type"))
-    threading.Thread(target=run_next_pass, args=(run_id, data), daemon=True).start()
+    search_type = data.get("search_type", ["opera_search"])
+    if isinstance(search_type, str):
+        search_type = [search_type]
+    uses_disasters = "all" in search_type or "mosaicking" in search_type
+    target = run_disasters if uses_disasters else run_next_pass
+    run_id = _create_run(search_type)
+    threading.Thread(target=target, args=(run_id, data), daemon=True).start()
     return jsonify({"status": "processing started", "run_id": run_id})
 
 
@@ -239,7 +319,10 @@ def show_maps():
 
     folder = run_state.get("latest_folder")
     if run_state.get("running") and not folder:
-        return "<h3>This search is still processing. Please wait a moment and try again.</h3>"
+        return (
+            "<h3>This search is still processing. Please wait a moment and try"
+            " again.</h3>"
+        )
 
     if run_state.get("error"):
         return f"<h3>Processing failed: {html.escape(run_state['error'])}</h3>", 500
@@ -250,14 +333,21 @@ def show_maps():
             404,
         )
 
-    search_type = run_state.get("search_type", "both")
+    search_type = run_state.get("search_type", ["opera_search"])
+    if isinstance(search_type, str):
+        search_type = [search_type]
     sat_map = "satellite_overpasses_map.html"
     opera_map = "opera_products_map.html"
     drcs_map = "opera_products_drcs_map.html"
 
-    show_sat = search_type in ("both", "overpasses")
-    show_opera = search_type in ("both", "opera_search")
-    show_drcs = show_opera and os.path.exists(os.path.join(folder, drcs_map))
+    uses_disasters = "all" in search_type or "mosaicking" in search_type
+    show_sat = "overpasses" in search_type or "all" in search_type
+    show_opera = any(v in search_type for v in ("opera_search", "mosaicking", "all"))
+    show_drcs = (
+        (not uses_disasters)
+        and show_opera
+        and os.path.exists(os.path.join(folder, drcs_map))
+    )
 
     map_count = sum([show_sat, show_opera, show_drcs])
     iframe_width = f"{100 // map_count}%" if map_count else "100%"

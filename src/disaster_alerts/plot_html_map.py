@@ -312,12 +312,21 @@ def _generate_events_html_map(
 
                 <div id="control-panel">
                     <div class="input-group">
-                        <select id="search_type">
-                            <option value="both">Functionality: Both</option>
-                            <option value="overpasses">Functionality: Overpasses</option>
-                            <option value="opera_search">
-                                Functionality: Opera Search</option>
-                        </select>
+                        <div class="multi-dropdown" id="func-dropdown">
+                            <button type="button"
+                                class="multi-dropdown-btn"
+                                id="func-btn">All Functionality</button>
+                            <div class="multi-dropdown-list" id="func-list">
+                                <label><input type="checkbox" value="all"
+                                    checked> All</label>
+                                <label><input type="checkbox"
+                                    value="overpasses"> Overpasses</label>
+                                <label><input type="checkbox"
+                                    value="opera_search"> Opera Search</label>
+                                <label><input type="checkbox"
+                                    value="mosaicking"> Mosaicking</label>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="input-group">
@@ -457,6 +466,7 @@ def _generate_events_html_map(
                     });
                 });
 
+                setupMultiDropdown('func-btn', 'func-list', 'all', 'All Functionality');
                 setupMultiDropdown('sat-btn', 'sat-list', 'all', 'All Satellites');
                 setupMultiDropdown('prod-btn', 'prod-list', 'all', 'All Products');
 
@@ -510,7 +520,7 @@ def _generate_events_html_map(
 
                     const payload = {
                         ...currentBbox,
-                        search_type: document.getElementById('search_type').value,
+                        search_type: getMultiValues('func-list', 'all'),
                         satellites: getMultiValues('sat-list', 'all'),
                         products: getMultiValues('prod-list', 'all'),
                         lookback: document.getElementById('lookback').value,
