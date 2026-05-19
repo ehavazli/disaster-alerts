@@ -184,11 +184,13 @@ def run_disasters(run_id, params):
     """
     Runs the full disasters pipeline (search + mosaic + layouts).
     """
+    # Retrieve the shared state object for this specific run ID to track progress
     run_state = _get_run_state(run_id)
     if run_state is None:
         return
 
     try:
+        # Parse Bounding Box 
         bbox = [
             float(params["lat_min"]),
             float(params["lat_max"]),
@@ -196,47 +198,66 @@ def run_disasters(run_id, params):
             float(params["lon_max"]),
         ]
 
+        # Parse Selected Product
+        products = params.get("products", [])
+        target_product = products[0] if products and "all" not in products else None
+
+        # Parse Date Strategy
+        date_strat = params.get("dis_date_strat", "range")
+        pipeline_date = None
         number_of_dates = 5
-        if params.get("lookback") and str(params["lookback"]).isdigit():
-            number_of_dates = int(params["lookback"])
+        
+        if date_strat == "single": 
+            pipeline_date = params.get("dis_single_date")
+        elif date_strat == "range":
+            if params.get("dis_start_date") and params.get("dis_end_date"):
+                pipeline_date = f"{params['dis_start_date']}/{params['dis_end_date']}"
+        elif params.get("dis_recent_n"):
+            number_of_dates = int(params["dis_recent_n"])
 
         search_type = params.get("search_type", ["opera_search"])
         if isinstance(search_type, str):
             search_type = [search_type]
 
+        # Setup Isolated Output Directory 
+        output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build Configuration
         config = PipelineConfig(
             bbox=bbox,
-            output_dir=Path(BASE_OUTPUT_DIR),
-            layout_title=(
-                f"Disaster Analysis ({bbox[0]},{bbox[2]} – {bbox[1]},{bbox[3]})"
-            ),
-            date=None,
+            output_dir=output_dir,
+            product=target_product,
+            date=pipeline_date,
             number_of_dates=number_of_dates,
-            mode=params.get("mode", "flood"),
-            functionality="both" if "all" in search_type else "opera_search",
+            layout_title=f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – {bbox[1]:.2f},{bbox[3]:.2f})",
+            reclassify_snow_ice=bool(params.get("opt_rc", False)),
+            compute_cloudiness=bool(params.get("opt_cloud", False)),
+            no_mask=bool(params.get("opt_nomask", False)),
+            filter_date=params.get("opt_fd") or None,
+            slope_threshold=int(params["opt_st"]) if str(params.get("opt_st")).isdigit() else None
         )
-
-        print(f"Running disasters pipeline: mode={config.mode}, bbox={config.bbox}")
+    
+        print(f"Running disasters pipeline: product={config.product}, bbox={config.bbox}")
+        
+        # Execute Pipeline
         run_pipeline(config)
 
-        output_folder = _find_run_output_folder(
-            run_state["known_folders"], run_state["started_at"]
-        )
-        if output_folder:
-            _update_run_state(run_id, latest_folder=output_folder)
-            print(f"Success! Output folder: {output_folder}")
+        # Register Success/Failure
+        if output_dir.exists():
+            _update_run_state(run_id, latest_folder=str(output_dir))
+            print(f"Success! Output folder: {output_dir}")
         else:
             _update_run_state(
                 run_id,
-                error=(
-                    "Processing finished, but no output folder could be matched to this"
-                    " run."
-                ),
+                error="Processing finished, but no output folder was created."
             )
+            
     except Exception as e:
         _update_run_state(run_id, error=str(e))
         print(f"Error running disasters pipeline: {e}")
     finally:
+        # Always mark the job as finished, regardless of success or failure
         _update_run_state(run_id, running=False)
 
 
