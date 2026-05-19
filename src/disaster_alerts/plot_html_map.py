@@ -158,269 +158,165 @@ def _generate_events_html_map(
                 {% macro html(this, kwargs) %}
                 <style>
                     #control-panel {
-                        position: absolute;
-                        top: 20px; left: 200px;
-                        z-index: 1000;
-                        background: rgba(255, 255, 255, 0.95);
-                        padding: 8px 15px;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-                        display: flex;
-                        gap: 10px;
-                        align-items: center;
-                        border: 2px solid #374151;
-                        font-family: Arial, sans-serif;
+                        position: absolute; top: 20px; left: 60px; z-index: 1000;
+                        background: rgba(255, 255, 255, 0.95); padding: 12px 20px;
+                        border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                        display: flex; flex-direction: column; gap: 12px;
+                        border: 2px solid #374151; font-family: Arial, sans-serif;
+                        max-width: 900px;
                     }
-
-                    .input-group {
-                        display: flex;
-                        align-items: center;
+                    .main-row { 
+                        display: flex; flex-direction: row; gap: 12px; align-items: center; 
+                        width: 100%; justify-content: flex-start; flex-wrap: nowrap;
                     }
-
-                    .field-label {
-                        display: none;
+                    .panel-label { font-size: 14px; font-weight: bold; color: #374151; white-space: nowrap;}
+                    .settings-panel { 
+                        display: flex; gap: 12px; align-items: center; 
+                        padding: 10px; background: #f3f4f6; border-radius: 6px;
+                        border: 1px dashed #9ca3af; flex-wrap: wrap; width: 100%;
+                        box-sizing: border-box;
                     }
-
-                    #control-panel select, #control-panel input {
-                        border: 1px solid #9ca3af;
-                        border-radius: 4px;
-                        padding: 4px 8px;
-                        font-size: 14px;
-                        background-color: #ffffff;
-                        color: #111827;
-                        height: 34px;
+                    select, input {
+                        border: 1px solid #9ca3af; border-radius: 4px; padding: 4px 8px;
+                        font-size: 13px; background-color: #ffffff; height: 34px; box-sizing: border-box;
                     }
-
-                    .multi-dropdown {
-                        position: relative;
-                        display: inline-block;
-                    }
-
+                    .multi-dropdown { position: relative; display: inline-block; }
                     .multi-dropdown-btn {
-                        position: relative;
-                        border: 1px solid #9ca3af;
-                        border-radius: 4px;
-                        padding: 4px 28px 4px 8px;
-                        font-size: 14px;
-                        background-color: #ffffff;
-                        color: #111827;
-                        height: 34px;
-                        cursor: pointer;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        width: 140px;
-                        text-align: left;
-                        appearance: none;
-                        -webkit-appearance: none;
-                        padding-right: 24px;
-                        font-family: Arial, sans-serif;
+                        border: 1px solid #9ca3af; border-radius: 4px; padding: 4px 24px 4px 8px;
+                        font-size: 13px; background-color: #ffffff; height: 34px; cursor: pointer;
+                        width: 160px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                     }
-
-                    .multi-dropdown-btn:hover {
-                        border-color: #6b7280;
-                    }
-
-                    .multi-dropdown-btn::after {
-                        content: " ▾";
-                        position: absolute;
-                        right: 8px;
-                    }
-
+                    .multi-dropdown-btn::after { content: " ▾"; position: absolute; right: 8px; top: 8px; }
                     .multi-dropdown-list {
-                        display: none;
-                        position: absolute;
-                        top: 36px;
-                        left: 0;
-                        background: #ffffff;
-                        border: 1px solid #9ca3af;
-                        border-radius: 4px;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                        z-index: 9999;
-                        min-width: 100%;
-                        padding: 4px 0;
+                        display: none; position: absolute; top: 36px; left: 0; background: #ffffff;
+                        border: 1px solid #9ca3af; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                        z-index: 9999; min-width: 100%; padding: 4px 0; max-height: 250px; overflow-y: auto;
                     }
-
-                    .multi-dropdown-list.open {
-                        display: block;
-                    }
-
+                    .multi-dropdown-list.open { display: block; }
                     .multi-dropdown-list label {
-                        display: flex;
-                        align-items: center;
-                        gap: 8px;
-                        padding: 5px 12px;
-                        font-size: 14px;
-                        color: #111827;
-                        cursor: pointer;
-                        white-space: nowrap;
+                        display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+                        font-size: 13px; cursor: pointer; white-space: nowrap;
                     }
-
-                    .multi-dropdown-list label:hover {
-                        background-color: #f3f4f6;
+                    .multi-dropdown-list label:hover { background-color: #f3f4f6; }
+                    
+                    #action-btn {
+                        background-color: #4b5563; color: white; border: none; padding: 0 25px;
+                        border-radius: 4px; font-weight: bold; font-size: 14px; cursor: pointer; 
+                        height: 34px; white-space: nowrap; transition: background-color 0.2s;
                     }
-
-                    #search-btn {
-                        background-color: #6b7280;
-                        color: white;
-                        border: none;
-                        padding: 0 20px;
-                        border-radius: 4px;
-                        font-weight: bold;
-                        font-size: 15px;
-                        cursor: pointer;
-                        height: 34px;
-                    }
-
-                    #search-btn:hover {
-                        background-color: #4b5563;
-                    }
-
-                    .leaflet-control-layers {
-                        border-radius: 8px !important;
-                        border: 2px solid #374151 !important;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.2) !important;
-                        background: rgba(255,255,255,0.95) !important;
-                        font-family: Arial, sans-serif !important;
-                        min-width: 200px !important;
-                        width: auto !important;
-                    }
-
-                    .leaflet-control-layers label {
-                        display: flex;
-                        align-items: center;
-                        white-space: nowrap;
-                        margin-bottom: 6px;
-                        font-size: 14px;
-                    }
-
-                    .leaflet-control-layers-expanded {
-                        padding: 10px !important;
-                    }
-
-                    .leaflet-control-layers-base,
-                    .leaflet-control-layers-overlays {
-                        margin-top: 6px;
-                    }
-
-                    /* Move legend slightly down */
-                    .leaflet-top.leaflet-right {
-                        top: 80px !important;
-                    }
-
+                    #action-btn:hover { background-color: #374151; }
+                    
+                    .dynamic-opt { display: flex; align-items: center; gap: 6px; font-size: 13px; background: #e5e7eb; padding: 4px 8px; border-radius: 4px; border: 1px solid #d1d5db;}
+                    .radio-group { display: flex; gap: 15px; align-items: center; font-size: 13px; background: #ffffff; padding: 4px 10px; border-radius: 4px; border: 1px solid #9ca3af; height: 34px; box-sizing: border-box;}
+                    .radio-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
                 </style>
 
                 <div id="control-panel">
-                    <div class="input-group">
+                    <div class="main-row">
+                        <span class="panel-label">Workflow:</span>
+                        
                         <div class="multi-dropdown" id="func-dropdown">
-                            <button type="button"
-                                class="multi-dropdown-btn"
-                                id="func-btn">All Functionality</button>
+                            <button type="button" class="multi-dropdown-btn" id="func-btn">All Functionality</button>
                             <div class="multi-dropdown-list" id="func-list">
-                                <label><input type="checkbox" value="all"
-                                    checked> All</label>
-                                <label><input type="checkbox"
-                                    value="overpasses"> Overpasses</label>
-                                <label><input type="checkbox"
-                                    value="opera_search"> Opera Search</label>
-                                <label><input type="checkbox"
-                                    value="mosaicking"> Mosaicking</label>
+                                <label><input type="checkbox" value="all" checked> All</label>
+                                <label><input type="checkbox" value="overpasses"> Overpasses</label>
+                                <label><input type="checkbox" value="opera_search"> Opera Search</label>
+                                <label><input type="checkbox" value="disasters"> Disasters Workflow</label>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="input-group">
-                        <div class="multi-dropdown" id="sat-dropdown">
-                            <button type="button"
-                                class="multi-dropdown-btn"
-                                id="sat-btn">All Satellites</button>
-                            <div class="multi-dropdown-list" id="sat-list">
-                                <label><input type="checkbox" value="all"
-                                    checked> All Satellites</label>
-                                <label><input type="checkbox"
-                                    value="sentinel-1"> Sentinel-1</label>
-                                <label><input type="checkbox"
-                                    value="sentinel-2"> Sentinel-2</label>
-                                <label><input type="checkbox"
-                                    value="landsat"> Landsat</label>
-                                <label><input type="checkbox"
-                                    value="nisar"> NISAR</label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="input-group">
                         <div class="multi-dropdown" id="prod-dropdown">
-                            <button type="button"
-                                class="multi-dropdown-btn"
-                                id="prod-btn">All Products</button>
+                            <button type="button" class="multi-dropdown-btn" id="prod-btn">All Products</button>
                             <div class="multi-dropdown-list" id="prod-list">
-                                <label><input type="checkbox" value="all"
-                                    checked> All Products</label>
-                                <label><input type="checkbox"
-                                    value="DSWX-HLS_V1"> DSWX-HLS_V1</label>
-                                <label><input type="checkbox"
-                                    value="DSWX-S1_V1"> DSWX-S1_V1</label>
-                                <label><input type="checkbox"
-                                    value="DIST-ALERT-HLS_V1"> DIST-ALERT-HLS_V1</label>
-                                <label><input type="checkbox"
-                                    value="DIST-ANN-HLS_V1"> DIST-ANN-HLS_V1</label>
-                                <label><input type="checkbox"
-                                    value="RTC-S1_V1"> RTC-S1_V1</label>
-                                <label><input type="checkbox"
-                                    value="CSLC-S1_V1"> CSLC-S1_V1</label>
-                                <label><input type="checkbox"
-                                    value="DISP-S1_V1"> DISP-S1_V1</label>
+                                <label><input type="checkbox" value="all" checked> All Products</label>
+                                <label><input type="checkbox" value="OPERA_L3_DSWX-HLS_V1"> DSWX-HLS</label>
+                                <label><input type="checkbox" value="OPERA_L3_DSWX-S1_V1"> DSWX-S1</label>
+                                <label><input type="checkbox" value="OPERA_L3_DIST-ALERT-HLS_V1"> DIST-ALERT-HLS</label>
+                                <label><input type="checkbox" value="OPERA_L3_DIST-ANN-HLS_V1"> DIST-ANN-HLS</label>
+                                <label><input type="checkbox" value="OPERA_L2_RTC-S1_V1"> RTC-S1</label>
+                                <label><input type="checkbox" value="OPERA_L2_CSLC-S1_V1"> CSLC-S1</label>
+                                <label><input type="checkbox" value="OPERA_L3_DISP-S1_V1"> DISP-S1</label>
                             </div>
                         </div>
+                        
+                        <div style="flex-grow: 1;"></div> 
+                        <button id="action-btn">SEARCH</button>
                     </div>
 
-                    <div class="input-group">
-                        <input type="number" id="lookback"
-                            placeholder="Number of lookback days"
-                            min="1" max="11" style="width: 190px;">
-                    </div>
-
-                    <div class="input-group">
-                        <select id="drcs_enabled" onchange="toggleDate(this.value)">
+                    <div id="next-pass-panel" class="settings-panel">
+                        <span class="panel-label">↳ Next Pass:</span>
+                        
+                        <div class="multi-dropdown" id="sat-dropdown">
+                            <button type="button" class="multi-dropdown-btn" id="sat-btn" style="width: 140px;">All Satellites</button>
+                            <div class="multi-dropdown-list" id="sat-list">
+                                <label><input type="checkbox" value="all" checked> All Satellites</label>
+                                <label><input type="checkbox" value="sentinel-1"> Sentinel-1</label>
+                                <label><input type="checkbox" value="sentinel-2"> Sentinel-2</label>
+                                <label><input type="checkbox" value="landsat"> Landsat</label>
+                                <label><input type="checkbox" value="nisar"> NISAR</label>
+                            </div>
+                        </div>
+                        
+                        <input type="number" id="np_lookback" placeholder="Lookback (days)" min="1" max="30" style="width: 130px;">
+                        
+                        <select id="drcs_enabled" onchange="toggleDrcsDate(this.value)" style="width: 100px;">
                             <option value="no">DRCS: No</option>
                             <option value="yes">DRCS: Yes</option>
                         </select>
+                        <input type="text" id="drcs_event_date" placeholder="Event: YYYY-MM-DDTHH:MM" disabled style="width: 170px;">
                     </div>
 
-                    <div class="input-group">
-                        <input type="text" id="event_date"
-                            placeholder="YYYY-MM-DDTHH:MM"
-                            value="YYYY-MM-DDTHH:MM" disabled style="width: 180px;">
-                    </div>
+                    <div id="disasters-panel" class="settings-panel" style="display: none;">
+                        <span class="panel-label">↳ Disasters:</span>
+                        
+                        <select id="dis_action" style="font-weight: bold; background-color: #e5e7eb;">
+                            <option value="run" selected>Full Pipeline (Maps & Layouts)</option>
+                            <option value="mosaic">Mosaic GeoTIFFs Only</option>
+                            <option value="download">Download Granules Only</option>
+                        </select>
 
-                    <button id="search-btn">Search</button>
+                        <div class="radio-group">
+                            <label><input type="radio" name="date_strat" value="range" checked onchange="toggleDisDateStrat()"> Range</label>
+                            <label><input type="radio" name="date_strat" value="single" onchange="toggleDisDateStrat()"> Single</label>
+                            <label><input type="radio" name="date_strat" value="recent" onchange="toggleDisDateStrat()"> Recent</label>
+                        </div>
+                        
+                        <div id="dis_range_div" style="display:flex; align-items:center; gap:6px;">
+                            <input type="date" id="dis_start_date"> <span>to</span> <input type="date" id="dis_end_date">
+                        </div>
+                        <input type="date" id="dis_single_date" style="display:none;">
+                        <input type="number" id="dis_recent_n" placeholder="# of passes" min="1" style="display:none; width: 100px;">
+
+                        <div id="dis_adv_options" style="display:flex; gap:10px; margin-left: auto;">
+                            <label class="dynamic-opt"><input type="checkbox" id="opt_nomask"> No Mask</label>
+                            <label class="dynamic-opt" id="wrap_rc" style="display:none;"><input type="checkbox" id="opt_rc"> Reclassify Snow/Ice</label>
+                            <label class="dynamic-opt" id="wrap_cloud" style="display:none;"><input type="checkbox" id="opt_cloud"> Calc Cloudiness</label>
+                            
+                            <div class="dynamic-opt" id="wrap_fd" style="display:none; height: 34px; box-sizing: border-box;">
+                                Filter (-fd): <input type="date" id="opt_fd" style="height:24px; border:none; padding:0 4px;">
+                            </div>
+                            <div class="dynamic-opt" id="wrap_st" style="display:none; height: 34px; box-sizing: border-box;">
+                                Slope (-st): <input type="number" id="opt_st" placeholder="Deg" min="0" max="100" style="width:50px; height:24px; border:none; padding:0 4px;">
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 {% endmacro %}
 
                 {% macro script(this, kwargs) %}
-                var currentBbox = null;
-                var currentBboxLayer = null;
-                var justDrawn = false;
+                var currentBbox = null; var currentBboxLayer = null; var justDrawn = false;
 
-                // ---- Custom multi-select dropdown logic ----
                 function setupMultiDropdown(btnId, listId, allValue, defaultLabel) {
-                    var btn = document.getElementById(btnId);
-                    var list = document.getElementById(listId);
+                    var btn = document.getElementById(btnId); var list = document.getElementById(listId);
                     var checkboxes = list.querySelectorAll('input[type=checkbox]');
                     var allBox = list.querySelector('input[value="' + allValue + '"]');
 
                     btn.addEventListener('click', function(e) {
                         e.stopPropagation();
-                        var open = '.multi-dropdown-list.open';
-                        document.querySelectorAll(open).forEach(function(el) {
+                        document.querySelectorAll('.multi-dropdown-list.open').forEach(function(el) {
                             if (el !== list) el.classList.remove('open');
                         });
                         list.classList.toggle('open');
-                    });
-
-                    list.addEventListener('click', function(e) {
-                        e.stopPropagation();
                     });
 
                     checkboxes.forEach(function(cb) {
@@ -432,21 +328,15 @@ def _generate_events_html_map(
                                 allBox.checked = false;
                             }
                             updateLabel();
+                            if (listId === 'func-list') updatePanels();
+                            if (listId === 'prod-list') updateDisasterOptions();
                         });
                     });
 
                     function updateLabel() {
-                        if (allBox.checked) {
-                            btn.textContent = defaultLabel;
-                            return;
-                        }
-                        var selected = Array.from(checkboxes)
-                            .filter(function(c) {
-                                return c.checked && c !== allBox;
-                            })
-                            .map(function(c) { return c.value; });
-                        btn.textContent = selected.length
-                            ? selected.join(', ') : defaultLabel;
+                        if (allBox.checked) { btn.textContent = defaultLabel; return; }
+                        var sel = Array.from(checkboxes).filter(c => c.checked && c !== allBox).map(c => c.value);
+                        btn.textContent = sel.length ? sel.join(', ') : defaultLabel;
                     }
                 }
 
@@ -454,116 +344,128 @@ def _generate_events_html_map(
                     var list = document.getElementById(listId);
                     var allBox = list.querySelector('input[value="' + allValue + '"]');
                     if (allBox.checked) return [allValue];
-                    return Array.from(list.querySelectorAll('input[type=checkbox]'))
-                        .filter(function(c) { return c.checked; })
-                        .map(function(c) { return c.value; });
+                    return Array.from(list.querySelectorAll('input[type=checkbox]')).filter(c => c.checked).map(c => c.value);
                 }
 
                 document.addEventListener('click', function() {
-                    var open = '.multi-dropdown-list.open';
-                    document.querySelectorAll(open).forEach(function(el) {
-                        el.classList.remove('open');
-                    });
+                    document.querySelectorAll('.multi-dropdown-list.open').forEach(el => el.classList.remove('open'));
                 });
 
                 setupMultiDropdown('func-btn', 'func-list', 'all', 'All Functionality');
                 setupMultiDropdown('sat-btn', 'sat-list', 'all', 'All Satellites');
                 setupMultiDropdown('prod-btn', 'prod-list', 'all', 'All Products');
 
-                function toggleDate(val) {
-                    const input = document.getElementById('event_date');
-                    if(val === 'yes') {
-                        input.disabled = false;
-                        input.value = '';
-                        input.style.color = '#000000';
+                // --- UI Toggles ---
+                function updatePanels() {
+                    var funcs = getMultiValues('func-list', 'all');
+                    var showNextPass = funcs.includes('all') || funcs.includes('overpasses') || funcs.includes('opera_search');
+                    var showDisasters = funcs.includes('all') || funcs.includes('disasters');
+
+                    document.getElementById('next-pass-panel').style.display = showNextPass ? 'flex' : 'none';
+                    document.getElementById('disasters-panel').style.display = showDisasters ? 'flex' : 'none';
+
+                    // Update Button Text
+                    var btn = document.getElementById('action-btn');
+                    if (showDisasters && !showNextPass) {
+                        btn.textContent = "RUN DISASTERS";
+                        btn.style.backgroundColor = "#059669"; // Green to indicate action
                     } else {
-                        input.disabled = true;
-                        input.value = 'YYYY-MM-DDTHH:MM';
-                        input.style.color = '#6b7280';
+                        btn.textContent = "SEARCH";
+                        btn.style.backgroundColor = "#4b5563"; // Default Gray
                     }
                 }
 
+                function toggleDrcsDate(val) {
+                    var input = document.getElementById('drcs_event_date');
+                    input.disabled = (val !== 'yes');
+                }
+
+                function toggleDisDateStrat() {
+                    var val = document.querySelector('input[name="date_strat"]:checked').value;
+                    document.getElementById('dis_recent_n').style.display = (val === 'recent') ? 'block' : 'none';
+                    document.getElementById('dis_single_date').style.display = (val === 'single') ? 'block' : 'none';
+                    document.getElementById('dis_range_div').style.display = (val === 'range') ? 'flex' : 'none';
+                }
+
+                // --- Product-Aware Logic ---
+                function updateDisasterOptions() {
+                    var prods = getMultiValues('prod-list', 'all');
+                    var isAll = prods.includes('all');
+                    
+                    var hasHLS = isAll || prods.some(p => p.includes('HLS'));
+                    var hasDSWxHLS = isAll || prods.some(p => p.includes('DSWX-HLS'));
+                    var hasDIST = isAll || prods.some(p => p.includes('DIST'));
+                    var hasRTC = isAll || prods.some(p => p.includes('RTC') || p.includes('S1'));
+
+                    document.getElementById('wrap_cloud').style.display = hasHLS ? 'flex' : 'none';
+                    document.getElementById('wrap_rc').style.display = hasDSWxHLS ? 'flex' : 'none';
+                    document.getElementById('wrap_fd').style.display = hasDIST ? 'flex' : 'none';
+                    document.getElementById('wrap_st').style.display = hasRTC ? 'flex' : 'none';
+                }
+
+                // Initialize UI
+                updatePanels(); toggleDisDateStrat(); updateDisasterOptions();
+
+                // --- Map Box Drawing ---
                 {{this._parent.get_name()}}.on('draw:created', function(e) {
-                    if (currentBboxLayer) {
-                        {{this._parent.get_name()}}.removeLayer(currentBboxLayer);
-                    }
+                    if (currentBboxLayer) {{this._parent.get_name()}}.removeLayer(currentBboxLayer);
                     currentBboxLayer = e.layer;
                     currentBboxLayer.addTo({{this._parent.get_name()}});
                     var bounds = currentBboxLayer.getBounds();
-                    currentBbox = {
-                        lat_min: bounds.getSouth(),
-                        lat_max: bounds.getNorth(),
-                        lon_min: bounds.getWest(),
-                        lon_max: bounds.getEast()
-                    };
+                    currentBbox = { lat_min: bounds.getSouth(), lat_max: bounds.getNorth(), lon_min: bounds.getWest(), lon_max: bounds.getEast() };
                     justDrawn = true;
-                    console.log("Bounding box ready.");
                 });
 
                 {{this._parent.get_name()}}.on('click', function() {
-                    if (justDrawn) {
-                        justDrawn = false;
-                        return;
-                    }
-                    if (currentBboxLayer) {
-                        {{this._parent.get_name()}}.removeLayer(currentBboxLayer);
-                        currentBboxLayer = null;
-                        currentBbox = null;
-                    }
+                    if (justDrawn) { justDrawn = false; return; }
+                    if (currentBboxLayer) { {{this._parent.get_name()}}.removeLayer(currentBboxLayer); currentBboxLayer = null; currentBbox = null; }
                 });
 
-                document.getElementById('search-btn').onclick = function() {
-                    if (!currentBbox) {
-                        alert("Please draw a bounding box on the map first!");
-                        return;
-                    }
+                // --- Submit Payload ---
+                document.getElementById('action-btn').onclick = function() {
+                    if (!currentBbox) { alert("Please draw a bounding box!"); return; }
 
                     const payload = {
                         ...currentBbox,
                         search_type: getMultiValues('func-list', 'all'),
-                        satellites: getMultiValues('sat-list', 'all'),
                         products: getMultiValues('prod-list', 'all'),
-                        lookback: document.getElementById('lookback').value,
-                        drcs: document.getElementById('drcs_enabled').value
-                            .replace('DRCS: ', '').toLowerCase(),
-                        event_date: document.getElementById('event_date').value
+                        
+                        // Next Pass Payload
+                        satellites: getMultiValues('sat-list', 'all'),
+                        np_lookback: document.getElementById('np_lookback').value,
+                        drcs: document.getElementById('drcs_enabled').value,
+                        drcs_event_date: document.getElementById('drcs_event_date').value,
+                        
+                        // Disasters Payload
+                        dis_action: document.getElementById('dis_action').value,
+                        dis_date_strat: document.querySelector('input[name="date_strat"]:checked').value,
+                        dis_recent_n: document.getElementById('dis_recent_n').value,
+                        dis_single_date: document.getElementById('dis_single_date').value,
+                        dis_start_date: document.getElementById('dis_start_date').value,
+                        dis_end_date: document.getElementById('dis_end_date').value,
+                        
+                        // Disasters Advanced Opts
+                        opt_nomask: document.getElementById('opt_nomask').checked,
+                        opt_rc: document.getElementById('opt_rc').checked,
+                        opt_cloud: document.getElementById('opt_cloud').checked,
+                        opt_fd: document.getElementById('opt_fd').value,
+                        opt_st: document.getElementById('opt_st').value
                     };
 
                     fetch("/process_bbox", {
-                        method: "POST",
-                        headers: {"Content-Type": "application/json"},
-                        body: JSON.stringify(payload)
-                    })
-                    .then(resp => {
-                        if (!resp.ok) {
-                            throw new Error("Unable to start processing.");
-                        }
-                        return resp.json();
-                    })
-                    .then(data => {
-                        if (!data.run_id) {
-                            throw new Error("Server did not return a run identifier.");
-                        }
-                        alert("Search command sent. Processing...");
-                        checkStatus(data.run_id);
-                    })
-                    .catch(err => {
-                        alert("Unable to start processing: " + err.message);
-                    });
+                        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+                    }).then(r => r.json()).then(data => {
+                        if (data.run_id) { alert("Request submitted. Processing..."); checkStatus(data.run_id); }
+                    }).catch(e => alert("Error: " + e.message));
                 };
 
                 function checkStatus(runId) {
                     fetch(`/processing_status?run_id=${encodeURIComponent(runId)}`)
                         .then(r => r.json())
                         .then(status => {
-                            if (status.running) {
-                                setTimeout(() => checkStatus(runId), 2000);
-                            } else if (status.error) {
-                                alert("Processing failed: " + status.error);
-                            } else {
-                                window.location.href =
-                                    `/show_maps?run_id=${encodeURIComponent(runId)}`;
-                            }
+                            if (status.running) setTimeout(() => checkStatus(runId), 2000);
+                            else if (status.error) alert("Failed: " + status.error);
+                            else window.location.href = `/show_maps?run_id=${encodeURIComponent(runId)}`;
                         });
                 }
                 {% endmacro %}
