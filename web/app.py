@@ -74,6 +74,7 @@ def _get_search_signature(params):
         ],
         "products": sorted(prods),
         "satellites": sorted(sats),
+        "functionality": params.get("functionality", "opera_search"),
         "date_strat": params.get("dis_date_strat"),
         "recent_n": params.get("dis_recent_n"),
         "single_date": params.get("dis_single_date"),
@@ -249,7 +250,13 @@ def run_opera_search(run_id, params):
             product=np_prod,
             date=pipeline_date,
             number_of_dates=number_of_dates,
+            functionality=params.get("functionality", "opera_search"),
             compute_cloudiness=bool(params.get("opt_cloud", False)),
+            satellites=(
+                params.get("satellites")
+                if "all" not in params.get("satellites", [])
+                else None
+            ),
         )
 
         # Cache search signature and folder path for reuse in the disasters workflow
@@ -362,7 +369,7 @@ def run_disasters(run_id, params):
         else:
             returned_dir = run_pipeline(config)
 
-        # Register Success/Failure using the returned artifacts.
+        # Register Success/Failure using the returned artifacts path safely
         if returned_dir and Path(returned_dir).exists():
             _update_run_state(run_id, latest_folder=str(returned_dir))
             print(f"Success! Output folder: {returned_dir}")
@@ -474,7 +481,7 @@ def show_maps():
     run_id = request.args.get("run_id")
     run_state = _get_run_state(run_id)
     if run_state is None:
-        return "<h3>No run selected. Start a search from the dashboard first.</h3>", 404
+        return "<h3>No run selected. Start a dashboard search first.</h3>", 404
 
     folder = run_state.get("latest_folder")
     if run_state.get("running") and not folder:
