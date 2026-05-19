@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-from disasters.pipeline import PipelineConfig, run_pipeline
+from disasters.pipeline import PipelineConfig, run_pipeline, run_search_only
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 print("Flask is running with Python:", sys.executable)
@@ -30,6 +30,22 @@ processing_runs = {}
 processing_runs_lock = threading.Lock()
 
 
+LAST_SEARCH_CACHE = {
+    "signature": None,
+    "folder": None
+}
+
+def _get_search_signature(params):
+    return str({
+        "bbox": [params.get("lat_min"), params.get("lat_max"), params.get("lon_min"), params.get("lon_max")],
+        "products": params.get("products", []),
+        "date_strat": params.get("dis_date_strat"),
+        "recent_n": params.get("dis_recent_n"),
+        "single_date": params.get("dis_single_date"),
+        "start_date": params.get("dis_start_date"),
+        "end_date": params.get("dis_end_date")
+    })
+
 def _list_output_folders():
     return sorted(
         glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*")),
@@ -46,7 +62,6 @@ def _create_run(search_type):
         "error": None,
         "search_type": search_type or ["opera_search"],
         "started_at": time.time(),
-        "known_folders": set(_list_output_folders()),
     }
     with processing_runs_lock:
         processing_runs[run_id] = run_state
@@ -71,43 +86,17 @@ def _update_run_state(run_id, **updates):
         run_state.update(updates)
 
 
-def _find_run_output_folder(before_folders, started_at):
-    candidate_folders = _list_output_folders()
-    new_folders = [
-        folder for folder in candidate_folders if folder not in before_folders
-    ]
-    if new_folders:
-        recent_new_folders = [
-            folder
-            for folder in new_folders
-            if os.path.getmtime(folder) >= (started_at - 1)
-        ]
-        if recent_new_folders:
-            new_folders = recent_new_folders
-        return max(new_folders, key=os.path.getmtime)
-
-    recent_folders = [
-        folder
-        for folder in candidate_folders
-        if os.path.getmtime(folder) >= (started_at - 1)
-    ]
-    if recent_folders:
-        return max(recent_folders, key=os.path.getmtime)
-
-    return None
-
-
-def run_next_pass(run_id, params):
+def run_overpasses_only(run_id, params):
     """
-    Builds the command line arguments based on the dashboard panel selections
-    and executes the next_pass module.
+    Builds the command line arguments based on the dashboard panel selections.
+    Executes a next_pass query for satellite overpasses ONLY.
     """
     run_state = _get_run_state(run_id)
     if run_state is None:
         return
 
     try:
-        # 1) Base command with Bounding Box
+        # Build the base terminal command using the bounding box
         cmd = [
             sys.executable,
             "-m",
@@ -117,102 +106,128 @@ def run_next_pass(run_id, params):
             str(params["lat_max"]),
             str(params["lon_min"]),
             str(params["lon_max"]),
+            "-f",
+            "overpasses",
         ]
 
-        # 2) Derive -f flag from multi-select list
-        search_type = params.get("search_type", ["opera_search"])
-        if isinstance(search_type, str):
-            search_type = [search_type]
+        # Append UI parameters specific to the "Next Pass" panel
+        if params.get("satellites") and "all" not in params["satellites"]:
+            cmd.extend(["-s"] + params["satellites"])
 
-        # Ensure "all" is caught correctly for both functionalities
-        has_overpasses = "overpasses" in search_type or "all" in search_type
-        has_opera = "opera_search" in search_type or "all" in search_type
+        if params.get("np_lookback") and str(params["np_lookback"]).isdigit():
+            cmd.extend(["-k", str(params["np_lookback"])])
 
-        if has_overpasses and has_opera:
-            functionality = "both"
-        elif has_overpasses:
-            functionality = "overpasses"
-        else:
-            functionality = "opera_search"
-        cmd += ["-f", functionality]
+        if params.get("drcs") == "yes" and params.get("np_event_date"):
+            cmd.extend(["-g", params["np_event_date"]])
 
-        # 3) Add Satellites (-s)
-        if params.get("satellites"):
-            cmd.append("-s")
-            cmd.extend(params["satellites"])
-
-        # 4) Add Products (-p); skip entirely if "all" selected
-        products = params.get("products", [])
-        if products and "all" not in products:
-            cmd.append("-p")
-            # Strip the prefix so next_pass doesn't double it!
-            clean_prods = [
-                p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in products
-            ]
-            cmd.extend(clean_prods)
-
-        # 5) Add Lookback (-k)
-        if params.get("lookback") and str(params["lookback"]).isdigit():
-            cmd += ["-k", str(params["lookback"])]
-
-        # 6) Add Event Date (-g); only if DRCS is enabled and date is valid
-        if params.get("drcs") == "yes" and params.get("event_date") not in [
-            None,
-            "N/A",
-            "",
-        ]:
-            cmd += ["-g", params["event_date"]]
-
-        print("Executing command:", " ".join(cmd))
-        subprocess.run(cmd, check=True, cwd=BASE_OUTPUT_DIR)
-
-        output_folder = _find_run_output_folder(
-            run_state["known_folders"], run_state["started_at"]
+        # Take a snapshot of folders before running, execute,
+        # then find the newly created folder
+        before_folders = set(
+            glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*"))
         )
-        if output_folder:
-            _update_run_state(run_id, latest_folder=output_folder)
-            print(f"Success! Output folder: {output_folder}")
-        else:
+        subprocess.run(cmd, check=True, cwd=BASE_OUTPUT_DIR)
+        after_folders = set(
+            glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*"))
+        )
+
+        new_folders = list(after_folders - before_folders)
+        if new_folders:
             _update_run_state(
-                run_id,
-                error=(
-                    "Processing finished, but no output folder could be matched to this"
-                    " run."
-                ),
+                run_id, latest_folder=max(new_folders, key=os.path.getmtime)
             )
+        else:
+            _update_run_state(run_id, error="No output folder could be matched.")
     except Exception as e:
         _update_run_state(run_id, error=str(e))
-        print(f"Error running next_pass: {e}")
+    finally:
+        _update_run_state(run_id, running=False)
+
+
+def run_opera_search(run_id, params):
+    """
+    Queries the Earthdata catalog for OPERA products using the 'disasters' pipeline.
+    Caches the resulting output directory for faster downstream mosaicking.
+    """
+    run_state = _get_run_state(run_id)
+    if run_state is None: return
+
+    try:
+        bbox = [
+            float(params["lat_min"]),
+            float(params["lat_max"]),
+            float(params["lon_min"]),
+            float(params["lon_max"])]
+        
+        # Parse product selections (Preserving the multi-product target fixed list format from PR1)
+        products = params.get("products", [])
+        target_products = products if products and "all" not in products else None
+
+        # Even though this is purely a search, map the advanced Disasters date panel logic
+        date_strat = params.get("dis_date_strat", "range")
+        pipeline_date = None
+        number_of_dates = 5
+        if date_strat == "single": pipeline_date = params.get("dis_single_date")
+        elif date_strat == "range":
+            if params.get("dis_start_date") and params.get("dis_end_date"):
+                pipeline_date = f"{params['dis_start_date']}/{params['dis_end_date']}"
+        elif params.get("dis_recent_n"):
+            number_of_dates = int(params["dis_recent_n"])
+            
+        # Isolate the search output
+        output_dir = Path(BASE_OUTPUT_DIR) / f"search_outputs_{run_id}"
+        
+        # Strip prefixes for standard search engine compatibility if explicit targets are used
+        np_prod = None
+        if target_products:
+            np_prod = [p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in target_products]
+
+        # Execute the search natively in Python (instead of via subprocess)
+        result_dir = run_search_only(
+            bbox=bbox, 
+            output_dir=output_dir,
+            product=np_prod,
+            date=pipeline_date,
+            number_of_dates=number_of_dates,
+            compute_cloudiness=bool(params.get("opt_cloud", False))
+        )
+        
+        # Cache the search signature and folder path for potential reuse in the disasters workflow
+        if result_dir:
+            # Record a "signature" of the exact UI inputs used to generate this search and resulting folder path
+            LAST_SEARCH_CACHE["signature"] = _get_search_signature(params)
+            LAST_SEARCH_CACHE["folder"] = result_dir
+
+            _update_run_state(run_id, latest_folder=str(result_dir))
+        else:
+            _update_run_state(run_id, error="Search exited gracefully without outputs.")
+            
+    except Exception as e:
+        _update_run_state(run_id, error=str(e))
     finally:
         _update_run_state(run_id, running=False)
 
 
 def run_disasters(run_id, params):
     """
-    Runs the full disasters pipeline (search + mosaic + layouts).
+    Runs the full end-to-end disasters pipeline.
+    Checks the cache first to see if it can skip the cloud search phase.
     """
-    # Retrieve the shared state object for this specific run ID to track progress
     run_state = _get_run_state(run_id)
-    if run_state is None:
-        return
+    if run_state is None: return
 
     try:
-        # Parse Bounding Box
         bbox = [
             float(params["lat_min"]),
             float(params["lat_max"]),
             float(params["lon_min"]),
-            float(params["lon_max"]),
-        ]
-
-        # Parse Selected Product (Allow multiple products)
+            float(params["lon_max"])]
+            
         products = params.get("products", [])
         target_products = products if products and "all" not in products else None
 
-        # Parse Date Strategy
+        # Parse the Disasters Date panel logic
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
-        number_of_dates = 5
 
         if date_strat == "single":
             pipeline_date = params.get("dis_single_date")
@@ -231,14 +246,21 @@ def run_disasters(run_id, params):
         else:
             raise ValueError(f"Unsupported dis_date_strat: {date_strat}")
 
-        # Setup Isolated Output Directory
+        # Calculate the signature of the current UI inputs (check cache)
+        current_sig = _get_search_signature(params)
+        local_dir = None
+        
+        # If current UI inputs match UI inputs of the last search, grab folder from cache
+        if LAST_SEARCH_CACHE["signature"] == current_sig and LAST_SEARCH_CACHE["folder"]:
+            local_dir = Path(LAST_SEARCH_CACHE["folder"])
+
         output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build Configuration
         config = PipelineConfig(
             bbox=bbox,
             output_dir=output_dir,
+            search_dir=local_dir,
             product=target_products,
             date=pipeline_date,
             number_of_dates=number_of_dates,
@@ -286,9 +308,7 @@ def run_disasters(run_id, params):
 
     except Exception as e:
         _update_run_state(run_id, error=str(e))
-        print(f"Error running disasters pipeline: {e}")
     finally:
-        # Always mark the job as finished, regardless of success or failure
         _update_run_state(run_id, running=False)
 
 
@@ -322,10 +342,29 @@ def process_bbox():
     search_type = data.get("search_type", ["opera_search"])
     if isinstance(search_type, str):
         search_type = [search_type]
-    uses_disasters = "all" in search_type or "disasters" in search_type
-    target = run_disasters if uses_disasters else run_next_pass
+    
+    # Track targets dynamically to allow multi-select concurrency
+    targets = []
+    
+    if "disasters" in search_type or "all" in search_type:
+        targets.append(run_disasters)
+    else:
+        # Check independent toggles when a full pipeline run isn't requested
+        if "opera_search" in search_type:
+            targets.append(run_opera_search)
+        if "overpasses" in search_type:
+            targets.append(run_overpasses_only)
+
+    if not targets:
+        return jsonify({"error": "No valid workflows selected"}), 400
+
+    # Create a unified run ID for this combination request
     run_id = _create_run(search_type)
-    threading.Thread(target=target, args=(run_id, data), daemon=True).start()
+    
+    # Spawn a separate thread for every active target
+    for target in targets:
+        threading.Thread(target=target, args=(run_id, data), daemon=True).start()
+        
     return jsonify({"status": "processing started", "run_id": run_id})
 
 
