@@ -198,9 +198,9 @@ def run_disasters(run_id, params):
             float(params["lon_max"]),
         ]
 
-        # Parse Selected Product
+        # Parse Selected Product (Allow multiple products)
         products = params.get("products", [])
-        target_product = products[0] if products and "all" not in products else None
+        target_products = products if products and "all" not in products else None
 
         # Parse Date Strategy
         date_strat = params.get("dis_date_strat", "range")
@@ -227,7 +227,7 @@ def run_disasters(run_id, params):
         config = PipelineConfig(
             bbox=bbox,
             output_dir=output_dir,
-            product=target_product,
+            product=target_products,
             date=pipeline_date,
             number_of_dates=number_of_dates,
             layout_title=f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – {bbox[1]:.2f},{bbox[3]:.2f})",
@@ -240,17 +240,27 @@ def run_disasters(run_id, params):
     
         print(f"Running disasters pipeline: product={config.product}, bbox={config.bbox}")
         
-        # Execute Pipeline
-        run_pipeline(config)
+        # Route execution based on UI dropdown
+        dis_action = params.get("dis_action", "run")
+        returned_dir = None
 
-        # Register Success/Failure
-        if output_dir.exists():
-            _update_run_state(run_id, latest_folder=str(output_dir))
-            print(f"Success! Output folder: {output_dir}")
+        if dis_action == "download":
+            from disasters.pipeline import run_download_only
+            returned_dir = run_download_only(bbox=config.bbox, output_dir=config.output_dir, product=config.product)
+        elif dis_action == "mosaic":
+            from disasters.pipeline import run_mosaic_only
+            returned_dir = run_mosaic_only(input_dir=config.output_dir / "data", output_dir=config.output_dir, bbox=config.bbox, benchmark=False)
+        else:
+            returned_dir = run_pipeline(config)
+
+        # Register Success/Failure using the returned artifacts, NOT the pre-created directory
+        if returned_dir and Path(returned_dir).exists():
+            _update_run_state(run_id, latest_folder=str(returned_dir))
+            print(f"Success! Output folder: {returned_dir}")
         else:
             _update_run_state(
                 run_id,
-                error="Processing finished, but no output folder was created."
+                error="Processing finished, but no valid output artifacts were produced."
             )
             
     except Exception as e:
@@ -291,7 +301,7 @@ def process_bbox():
     search_type = data.get("search_type", ["opera_search"])
     if isinstance(search_type, str):
         search_type = [search_type]
-    uses_disasters = "all" in search_type or "mosaicking" in search_type
+    uses_disasters = "all" in search_type or "disasters" in search_type
     target = run_disasters if uses_disasters else run_next_pass
     run_id = _create_run(search_type)
     threading.Thread(target=target, args=(run_id, data), daemon=True).start()
@@ -361,9 +371,9 @@ def show_maps():
     opera_map = "opera_products_map.html"
     drcs_map = "opera_products_drcs_map.html"
 
-    uses_disasters = "all" in search_type or "mosaicking" in search_type
+    uses_disasters = "all" in search_type or "disasters" in search_type
     show_sat = "overpasses" in search_type or "all" in search_type
-    show_opera = any(v in search_type for v in ("opera_search", "mosaicking", "all"))
+    show_opera = any(v in search_type for v in ("opera_search", "disasters", "all"))
     show_drcs = (
         (not uses_disasters)
         and show_opera

@@ -432,9 +432,9 @@ def _generate_events_html_map(
                         
                         // Next Pass Payload
                         satellites: getMultiValues('sat-list', 'all'),
-                        np_lookback: document.getElementById('np_lookback').value,
+                        lookback: document.getElementById('np_lookback').value,
                         drcs: document.getElementById('drcs_enabled').value,
-                        drcs_event_date: document.getElementById('drcs_event_date').value,
+                        event_date: document.getElementById('drcs_event_date').value,
                         
                         // Disasters Payload
                         dis_action: document.getElementById('dis_action').value,
