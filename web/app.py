@@ -230,7 +230,10 @@ def run_disasters(run_id, params):
             product=target_products,
             date=pipeline_date,
             number_of_dates=number_of_dates,
-            layout_title=f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – {bbox[1]:.2f},{bbox[3]:.2f})",
+            layout_title=(
+                 f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – "
+                 f"{bbox[1]:.2f},{bbox[3]:.2f})"
+             ),
             reclassify_snow_ice=bool(params.get("opt_rc", False)),
             compute_cloudiness=bool(params.get("opt_cloud", False)),
             no_mask=bool(params.get("opt_nomask", False)),

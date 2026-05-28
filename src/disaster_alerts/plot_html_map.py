@@ -256,9 +256,14 @@ def _generate_events_html_map(
                                 <label><input type="checkbox" value="nisar"> NISAR</label>
                             </div>
                         </div>
-                        
-                        <input type="number" id="np_lookback" placeholder="Lookback (days)" min="1" max="30" style="width: 130px;">
-                        
+                        <input
+                             type="number"
+                             id="np_lookback"
+                             placeholder="Lookback (days)"
+                             min="1"
+                             max="30"
+                             style="width: 130px;"
+                         >
                         <select id="drcs_enabled" onchange="toggleDrcsDate(this.value)" style="width: 100px;">
                             <option value="no">DRCS: No</option>
                             <option value="yes">DRCS: Yes</option>
