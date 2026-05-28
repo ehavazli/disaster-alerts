@@ -123,8 +123,11 @@ def run_next_pass(run_id, params):
         search_type = params.get("search_type", ["opera_search"])
         if isinstance(search_type, str):
             search_type = [search_type]
-        has_overpasses = "overpasses" in search_type
-        has_opera = "opera_search" in search_type
+            
+        # Ensure "all" is caught correctly for both functionalities
+        has_overpasses = "overpasses" in search_type or "all" in search_type
+        has_opera = "opera_search" in search_type or "all" in search_type
+        
         if has_overpasses and has_opera:
             functionality = "both"
         elif has_overpasses:
@@ -142,7 +145,9 @@ def run_next_pass(run_id, params):
         products = params.get("products", [])
         if products and "all" not in products:
             cmd.append("-p")
-            cmd.extend(products)
+            # Strip the prefix so next_pass doesn't double it!
+            clean_prods = [p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in products]
+            cmd.extend(clean_prods)
 
         # 5) Add Lookback (-k)
         if params.get("lookback") and str(params["lookback"]).isdigit():
