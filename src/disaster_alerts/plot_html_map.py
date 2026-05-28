@@ -359,9 +359,13 @@ def _generate_events_html_map(
                     var funcs = getMultiValues('func-list', 'all');
                     var showNextPass = funcs.includes('all') || funcs.includes('overpasses') || funcs.includes('opera_search');
                     var showDisasters = funcs.includes('all') || funcs.includes('disasters');
+                    
+                    // Hide products if ONLY "overpasses" is selected
+                    var showProducts = funcs.includes('all') || funcs.includes('opera_search') || funcs.includes('disasters');
 
                     document.getElementById('next-pass-panel').style.display = showNextPass ? 'flex' : 'none';
                     document.getElementById('disasters-panel').style.display = showDisasters ? 'flex' : 'none';
+                    document.getElementById('prod-dropdown').style.display = showProducts ? 'inline-block' : 'none';
 
                     // Update Button Text
                     var btn = document.getElementById('action-btn');
