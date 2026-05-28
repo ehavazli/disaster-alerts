@@ -271,7 +271,6 @@ def _generate_events_html_map(
                         
                         <select id="dis_action" style="font-weight: bold; background-color: #e5e7eb;">
                             <option value="run" selected>Full Pipeline (Maps & Layouts)</option>
-                            <option value="mosaic">Mosaic GeoTIFFs Only</option>
                             <option value="download">Download Granules Only</option>
                         </select>
 

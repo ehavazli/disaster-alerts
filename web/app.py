@@ -247,9 +247,6 @@ def run_disasters(run_id, params):
         if dis_action == "download":
             from disasters.pipeline import run_download_only
             returned_dir = run_download_only(bbox=config.bbox, output_dir=config.output_dir, product=config.product)
-        elif dis_action == "mosaic":
-            from disasters.pipeline import run_mosaic_only
-            returned_dir = run_mosaic_only(input_dir=config.output_dir / "data", output_dir=config.output_dir, bbox=config.bbox, benchmark=False)
         else:
             returned_dir = run_pipeline(config)
 
