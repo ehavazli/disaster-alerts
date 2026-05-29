@@ -4,7 +4,9 @@ os.environ.setdefault("PANDAS_FUTURE_INFER_STRING", "0")
 
 import glob
 import html
+import json
 import logging
+import re
 import subprocess
 import sys
 import threading
@@ -12,7 +14,13 @@ import time
 import uuid
 from pathlib import Path
 
-from disasters.pipeline import PipelineConfig, run_pipeline, run_search_only
+from disasters.pipeline import (
+    PipelineConfig,
+    run_download_only,
+    run_mosaic_only,
+    run_pipeline,
+    run_search_only,
+)
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 print("Flask is running with Python:", sys.executable)
@@ -172,7 +180,8 @@ def run_overpasses_only(run_id, params):
         if params.get("drcs") == "yes" and params.get("np_event_date"):
             cmd.extend(["-g", params["np_event_date"]])
 
-        # Take a snapshot of folders before running/execute, find new folder
+        # Take a snapshot of folders before running, execute,
+        # then find the newly created folder
         before_folders = set(
             glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*"))
         )
@@ -211,11 +220,18 @@ def run_opera_search(run_id, params):
             float(params["lon_max"]),
         ]
 
-        # Parse product selections
-        products = params.get("products", [])
-        target_products = products if products and "all" not in products else None
+        # Parse product selections directly from the UI
+        raw_products = params.get("products", [])
+        target_products = [p for p in raw_products if p != "all"]
 
-        # While this is search, map the advanced Disasters date panel logic
+        # If "all" was chosen or nothing was selected,
+        # pass None to search the full catalog
+        search_products = (
+            None if (not target_products or "all" in raw_products) else target_products
+        )
+
+        # Even though this is purely a search, map the
+        # advanced Disasters date panel logic
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
         number_of_dates = 5
@@ -234,19 +250,11 @@ def run_opera_search(run_id, params):
         # Isolate the search output
         output_dir = Path(BASE_OUTPUT_DIR) / f"search_outputs_{run_id}"
 
-        # Strip prefixes for standard search engine compatibility
-        np_prod = None
-        if target_products:
-            np_prod = [
-                p.replace("OPERA_L3_", "").replace("OPERA_L2_", "")
-                for p in target_products
-            ]
-
-        # Execute the search natively in Python (instead of via subprocess)
+        # Execute the search natively in Python
         result_dir = run_search_only(
             bbox=bbox,
             output_dir=output_dir,
-            product=np_prod,
+            product=search_products,
             date=pipeline_date,
             number_of_dates=number_of_dates,
             functionality=params.get("functionality", "opera_search"),
@@ -258,9 +266,8 @@ def run_opera_search(run_id, params):
             ),
         )
 
-        # Cache search signature and folder path for reuse in the disasters workflow
+        # Cache the search signature and folder path
         if result_dir:
-            # Record a "signature" of the exact UI inputs used safely
             LAST_SEARCH_CACHE.update(
                 signature=_get_search_signature(params), folder=result_dir
             )
@@ -277,7 +284,8 @@ def run_opera_search(run_id, params):
 def run_disasters(run_id, params):
     """
     Runs the full end-to-end disasters pipeline.
-    Checks the cache first to see if it can skip the cloud search phase.
+    Phase 1: Generates a unified HTML map of all products.
+    Phase 2: Loops through each product to mosaic individually.
     """
     run_state = _get_run_state(run_id)
     if run_state is None:
@@ -291,8 +299,14 @@ def run_disasters(run_id, params):
             float(params["lon_max"]),
         ]
 
-        products = params.get("products", [])
-        target_products = products if products and "all" not in products else None
+        # Parse product selections directly from the UI
+        raw_products = params.get("products", [])
+        target_products = [p for p in raw_products if p != "all"]
+
+        # Phase 1 needs None for a unified comprehensive search if "all" is active
+        search_products = (
+            None if (not target_products or "all" in raw_products) else target_products
+        )
 
         # Parse the Disasters Date panel logic
         date_strat = params.get("dis_date_strat", "range")
@@ -318,67 +332,132 @@ def run_disasters(run_id, params):
         else:
             raise ValueError(f"Unsupported dis_date_strat: {date_strat}")
 
-        # Calculate the signature of the current UI inputs (check cache)
-        current_sig = _get_search_signature(params)
-        local_dir = None
-
-        # Take a frozen snapshot to prevent race conditions
-        cache_snap = LAST_SEARCH_CACHE.snapshot()
-
-        # If current UI inputs match UI inputs of the last search, grab folder from cache
-        if cache_snap["signature"] == current_sig and cache_snap["folder"]:
-            local_dir = Path(cache_snap["folder"])
-
         output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
         output_dir.mkdir(parents=True, exist_ok=True)
+        _update_run_state(run_id, latest_folder=str(output_dir))
 
-        config = PipelineConfig(
-            bbox=bbox,
-            output_dir=output_dir,
-            search_dir=local_dir,
-            product=target_products,
-            date=pipeline_date,
-            number_of_dates=number_of_dates,
-            layout_title=(
-                f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – "
-                f"{bbox[1]:.2f},{bbox[3]:.2f})"
-            ),
-            reclassify_snow_ice=bool(params.get("opt_rc", False)),
-            compute_cloudiness=bool(params.get("opt_cloud", False)),
-            no_mask=bool(params.get("opt_nomask", False)),
-            filter_date=params.get("opt_fd") or None,
-            slope_threshold=(
-                int(params["opt_st"]) if str(params.get("opt_st")).isdigit() else None
-            ),
+        action = params.get("dis_action", "run")
+        search_type = params.get("search_type", ["opera_search"])
+        functionality = (
+            "both"
+            if "overpasses" in search_type or "all" in search_type
+            else "opera_search"
+        )
+        satellites_list = (
+            params.get("satellites")
+            if "all" not in params.get("satellites", [])
+            else None
         )
 
-        print(
-            f"Running disasters pipeline: product={config.product}, bbox={config.bbox}"
-        )
+        # =========================================================
+        # PHASE 1: UNIFIED SEARCH (Generates 1 Map for All Layers)
+        # =========================================================
+        current_sig = _get_search_signature(params)
+        search_dir = None
 
-        # Route execution based on UI dropdown
-        dis_action = params.get("dis_action", "run")
-        returned_dir = None
+        # Take a frozen snapshot to prevent race conditions (From main)
+        cache_snap = LAST_SEARCH_CACHE.snapshot()
 
-        if dis_action == "download":
-            from disasters.pipeline import run_download_only
-
-            returned_dir = run_download_only(
-                bbox=config.bbox, output_dir=config.output_dir, product=config.product
-            )
+        if cache_snap["signature"] == current_sig and cache_snap["folder"]:
+            search_dir = Path(cache_snap["folder"])
         else:
-            returned_dir = run_pipeline(config)
+            search_dir = run_search_only(
+                bbox=bbox,
+                output_dir=output_dir,
+                product=search_products,
+                date=pipeline_date,
+                number_of_dates=number_of_dates,
+                functionality=functionality,
+                compute_cloudiness=bool(params.get("opt_cloud", False)),
+                satellites=satellites_list,
+            )
+            if search_dir:
+                LAST_SEARCH_CACHE.update(signature=current_sig, folder=search_dir)
 
-        # Register Success/Failure using the returned artifacts path
-        if returned_dir and Path(returned_dir).exists():
-            _update_run_state(run_id, latest_folder=str(returned_dir))
-            print(f"Success! Output folder: {returned_dir}")
+        # =========================================================
+        # PHASE 2: PROCESSING LOOP (From your 5ebe231 commit)
+        # =========================================================
+        if not target_products and search_dir:
+            from disasters.pipeline import read_opera_metadata
+            try:
+                df_found = read_opera_metadata(search_dir)
+                if not df_found.empty and "Dataset" in df_found.columns:
+                    target_products = df_found["Dataset"].dropna().unique().tolist()
+            except Exception as e:
+                logging.warning(f"Failed to dynamically read catalog metadata: {e}")
+
+        if not target_products:
+            target_products = ["OPERA_L3_DSWX-HLS_V1"]
+
+        mode_dir = None
+        for single_product in target_products:
+            if action == "download":
+                res_dir = run_download_only(
+                    bbox=bbox,
+                    output_dir=output_dir,
+                    date=pipeline_date,
+                    number_of_dates=number_of_dates,
+                    product=single_product,
+                    functionality=functionality,
+                    compute_cloudiness=bool(params.get("opt_cloud", False)),
+                )
+                if res_dir:
+                    mode_dir = res_dir
+
+            elif action == "mosaic":
+                data_dir = run_download_only(
+                    bbox=bbox,
+                    output_dir=output_dir,
+                    date=pipeline_date,
+                    number_of_dates=number_of_dates,
+                    product=single_product,
+                    functionality=functionality,
+                    compute_cloudiness=bool(params.get("opt_cloud", False)),
+                )
+                if data_dir:
+                    res_dir = run_mosaic_only(
+                        input_dir=data_dir,
+                        output_dir=output_dir,
+                        bbox=bbox,
+                        benchmark=False,
+                    )
+                    if res_dir:
+                        mode_dir = res_dir
+
+            else:
+                config = PipelineConfig(
+                    bbox=bbox,
+                    output_dir=output_dir,
+                    local_dir=None,
+                    search_dir=search_dir,
+                    product=single_product,
+                    functionality=functionality,
+                    satellites=satellites_list,
+                    date=pipeline_date,
+                    number_of_dates=number_of_dates,
+                    layout_title=(
+                        f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} –"
+                        f" {bbox[1]:.2f},{bbox[3]:.2f})"
+                    ),
+                    reclassify_snow_ice=bool(params.get("opt_rc", False)),
+                    compute_cloudiness=bool(params.get("opt_cloud", False)),
+                    no_mask=bool(params.get("opt_nomask", False)),
+                    filter_date=params.get("opt_fd") or None,
+                    slope_threshold=(
+                        int(params["opt_st"])
+                        if str(params.get("opt_st")).isdigit()
+                        else None
+                    ),
+                )
+                res_dir = run_pipeline(config)
+                if res_dir:
+                    mode_dir = res_dir
+
+        if mode_dir and mode_dir.exists():
+            _update_run_state(run_id, latest_folder=str(mode_dir))
         else:
             _update_run_state(
-                run_id,
-                error=(
-                    "Processing finished, but no valid output artifacts were produced."
-                ),
+                run_id, error="Processing exited without generating a mode folder."
             )
 
     except Exception as e:
@@ -461,7 +540,7 @@ def processing_status():
     )
 
 
-# ---- Serve maps from latest next-pass folder ----
+# ---- Serve maps from latest next-pass or disasters folder ----
 @app.route("/maps/<run_id>/<path:filename>")
 def maps(run_id, filename):
     run_state = _get_run_state(run_id)
@@ -486,6 +565,7 @@ def maps(run_id, filename):
 def show_maps():
     """
     Display run_output.txt first, then the maps below it.
+    Renders GeoTIFFs natively for Disasters workflows, or HTML iframes for Next Pass.
     Shows a third DRCS map if opera_products_drcs_map.html was produced.
     """
     run_id = request.args.get("run_id")
@@ -505,28 +585,9 @@ def show_maps():
 
     if not folder:
         return (
-            "<h3>No next-pass output found for this search.</h3>",
+            "<h3>No output found for this search.</h3>",
             404,
         )
-
-    search_type = run_state.get("search_type", ["opera_search"])
-    if isinstance(search_type, str):
-        search_type = [search_type]
-    sat_map = "satellite_overpasses_map.html"
-    opera_map = "opera_products_map.html"
-    drcs_map = "opera_products_drcs_map.html"
-
-    uses_disasters = "all" in search_type or "disasters" in search_type
-    show_sat = "overpasses" in search_type or "all" in search_type
-    show_opera = any(v in search_type for v in ("opera_search", "disasters", "all"))
-    show_drcs = (
-        (not uses_disasters)
-        and show_opera
-        and os.path.exists(os.path.join(folder, drcs_map))
-    )
-
-    map_count = sum([show_sat, show_opera, show_drcs])
-    iframe_width = f"{100 // map_count}%" if map_count else "100%"
 
     log_file = os.path.join(folder, "run_output.txt")
     log_content = ""
@@ -534,23 +595,147 @@ def show_maps():
         with open(log_file, "r") as f:
             log_content = html.escape(f.read())
 
+    search_type = run_state.get("search_type", ["opera_search"])
+    if isinstance(search_type, str):
+        search_type = [search_type]
+
+    uses_disasters = "disasters" in search_type or "all" in search_type
+
+    # Recursively search the parent folder for the HTML maps
+    sat_map_path = next(Path(folder).rglob("satellite_overpasses_map.html"), None)
+    opera_map_path = next(Path(folder).rglob("opera_products_map.html"), None)
+
+    show_sat = sat_map_path is not None
+    show_opera = opera_map_path is not None
+
+    # Handle Next Pass & Opera Search (HTML iFrames)
     iframes = ""
     if show_sat:
-        iframes += f'<iframe src="/maps/{run_id}/{sat_map}"></iframe>'
+        rel_sat = os.path.relpath(sat_map_path, folder).replace(os.sep, "/")
+        iframes += f'<iframe src="/maps/{run_id}/{rel_sat}"></iframe>'
     if show_opera:
-        iframes += f'<iframe src="/maps/{run_id}/{opera_map}"></iframe>'
-    if show_drcs:
-        iframes += f'<iframe src="/maps/{run_id}/{drcs_map}"></iframe>'
+        rel_opera = os.path.relpath(opera_map_path, folder).replace(os.sep, "/")
+        iframes += f'<iframe src="/maps/{run_id}/{rel_opera}"></iframe>'
+
+    # Handle Disasters Workflow (Dynamic Leaflet GeoTIFF Layer Controls)
+    geotiff_viewer = ""
+    tif_layers_json = []
+
+    if uses_disasters:
+        # Walk through output folder to catch all mosaics
+        for root, _, files in os.walk(folder):
+            for file in files:
+                if file.endswith(".tif"):
+                    rel_path = os.path.relpath(os.path.join(root, file), folder)
+                    url_path = rel_path.replace(os.sep, "/")
+                    url = f"/maps/{run_id}/{url_path}"
+
+                    display_name = file.replace("_mosaic", "").replace(".tif", "")
+                    display_name = display_name.replace("OPERA_L3_", "").replace(
+                        "OPERA_L2_", ""
+                    )
+
+                    match = re.search(r"_(\d{8})T\d+", display_name)
+                    if match:
+                        date_str = match.group(1)
+                        base_name = display_name.split(f"_{date_str}")[0]
+                        display_name = (
+                            f"{base_name}"
+                            f" ({date_str[:4]}-{date_str[4:6]}-{date_str[6:]})"
+                        )
+
+                    tif_layers_json.append({"url": url, "name": display_name})
+
+        if tif_layers_json:
+            geotiff_viewer = f"""
+            <div id="geotiff-map" style="flex: 1; height: 100%;"></div>
+            <link rel="stylesheet"
+                  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <script src="https://unpkg.com/georaster"></script>
+            <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
+            <script>
+                var osmUrl = 'https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png';
+                var osm = L.tileLayer(osmUrl, {{
+                    attribution: '&copy; OpenStreetMap contributors'
+                }});
+
+                var satUrl = 'https://server.arcgisonline.com/ArcGIS/rest/' +
+                             'services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}';
+                var satellite = L.tileLayer(satUrl, {{
+                    attribution: 'Tiles &copy; Esri'
+                }});
+
+                var map = L.map('geotiff-map', {{
+                    center: [0, 0],
+                    zoom: 2,
+                    layers: [satellite]
+                }});
+
+                var baseMaps = {{
+                    "Satellite": satellite,
+                    "OpenStreetMap": osm
+                }};
+
+                var overlayMaps = {{}};
+                var layerControl = L.control.layers(
+                    baseMaps, overlayMaps, {{ collapsed: false }}
+                ).addTo(map);
+
+                var tifLayers = {json.dumps(tif_layers_json)};
+                var bounds = null;
+                var loadedCount = 0;
+
+                tifLayers.forEach(function(layerInfo, index) {{
+                    fetch(layerInfo.url)
+                      .then(response => response.arrayBuffer())
+                      .then(arrayBuffer => {{
+                        parseGeoraster(arrayBuffer).then(function(georaster) {{
+
+                          var layer = new GeoRasterLayer({{
+                              georaster: georaster,
+                              opacity: 0.8,
+                              resolution: 256
+                          }});
+
+                          if (index === 0) {{
+                              layer.addTo(map);
+                          }}
+
+                          layerControl.addOverlay(layer, layerInfo.name);
+
+                          if (!bounds) {{
+                              bounds = layer.getBounds();
+                          }} else {{
+                              bounds.extend(layer.getBounds());
+                          }}
+
+                          loadedCount++;
+                          if (loadedCount === tifLayers.length && bounds) {{
+                              map.fitBounds(bounds);
+                          }}
+                        }});
+                      }});
+                }});
+            </script>
+            """
+
+    # Adjust styling based on what is being shown
+    map_count = sum([show_sat, show_opera])
+    if uses_disasters and tif_layers_json:
+        map_count += 1
+
+    iframe_width = f"{100 // map_count}%" if map_count else "100%"
 
     page_html = f"""
     <html>
       <head>
-        <title>Next-Pass Results</title>
+        <title>Results</title>
         <style>
           body {{ display:flex; flex-direction: column; margin:0;
                   height:100vh; font-family:sans-serif;
                   background:#f3f4f6; }}
-          pre {{ flex:0 0 25%; overflow:auto; padding:15px;
+          pre {{ flex:0 0 25%; overflow:auto; padding:15px; margin:0;
                  background:#111; color:#10b981; font-size:12px;
                  border-bottom:2px solid #374151; }}
           .maps-row {{ display:flex; flex:1; background:white; }}
@@ -560,7 +745,10 @@ def show_maps():
       </head>
       <body>
         <pre>{log_content}</pre>
-        <div class="maps-row">{iframes}</div>
+        <div class="maps-row">
+            {iframes}
+            {geotiff_viewer}
+        </div>
       </body>
     </html>
     """
