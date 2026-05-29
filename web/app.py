@@ -219,8 +219,7 @@ def run_opera_search(run_id, params):
         # While this is search, map the advanced Disasters date panel logic
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
-        number_of_dates = 5
-
+        
         if date_strat == "single":
             pipeline_date = params.get("dis_single_date")
         elif date_strat == "range":
@@ -322,7 +321,7 @@ def run_disasters(run_id, params):
         current_sig = _get_search_signature(params)
         local_dir = None
 
-        # Use the thread-safe dictionary fetch
+        # If current UI inputs match UI inputs of the last search, grab folder from cache
         if (
             LAST_SEARCH_CACHE["signature"] == current_sig
             and LAST_SEARCH_CACHE["folder"]
@@ -369,7 +368,7 @@ def run_disasters(run_id, params):
         else:
             returned_dir = run_pipeline(config)
 
-        # Register Success/Failure using the returned artifacts path safely
+        # Register Success/Failure using the returned artifacts path
         if returned_dir and Path(returned_dir).exists():
             _update_run_state(run_id, latest_folder=str(returned_dir))
             print(f"Success! Output folder: {returned_dir}")
