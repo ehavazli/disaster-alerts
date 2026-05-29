@@ -30,21 +30,27 @@ processing_runs = {}
 processing_runs_lock = threading.Lock()
 
 
-LAST_SEARCH_CACHE = {
-    "signature": None,
-    "folder": None
-}
+LAST_SEARCH_CACHE = {"signature": None, "folder": None}
+
 
 def _get_search_signature(params):
-    return str({
-        "bbox": [params.get("lat_min"), params.get("lat_max"), params.get("lon_min"), params.get("lon_max")],
-        "products": params.get("products", []),
-        "date_strat": params.get("dis_date_strat"),
-        "recent_n": params.get("dis_recent_n"),
-        "single_date": params.get("dis_single_date"),
-        "start_date": params.get("dis_start_date"),
-        "end_date": params.get("dis_end_date")
-    })
+    return str(
+        {
+            "bbox": [
+                params.get("lat_min"),
+                params.get("lat_max"),
+                params.get("lon_min"),
+                params.get("lon_max"),
+            ],
+            "products": params.get("products", []),
+            "date_strat": params.get("dis_date_strat"),
+            "recent_n": params.get("dis_recent_n"),
+            "single_date": params.get("dis_single_date"),
+            "start_date": params.get("dis_start_date"),
+            "end_date": params.get("dis_end_date"),
+        }
+    )
+
 
 def _list_output_folders():
     return sorted(
@@ -149,58 +155,64 @@ def run_opera_search(run_id, params):
     Caches the resulting output directory for faster downstream mosaicking.
     """
     run_state = _get_run_state(run_id)
-    if run_state is None: return
+    if run_state is None:
+        return
 
     try:
         bbox = [
             float(params["lat_min"]),
             float(params["lat_max"]),
             float(params["lon_min"]),
-            float(params["lon_max"])]
-        
-        # Parse product selections (Preserving the multi-product target fixed list format from PR1)
+            float(params["lon_max"]),
+        ]
+
+        # Parse product selections
         products = params.get("products", [])
         target_products = products if products and "all" not in products else None
 
-        # Even though this is purely a search, map the advanced Disasters date panel logic
+        # While this is search, map the advanced Disasters date panel logic
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
         number_of_dates = 5
-        if date_strat == "single": pipeline_date = params.get("dis_single_date")
+        if date_strat == "single":
+            pipeline_date = params.get("dis_single_date")
         elif date_strat == "range":
             if params.get("dis_start_date") and params.get("dis_end_date"):
                 pipeline_date = f"{params['dis_start_date']}/{params['dis_end_date']}"
         elif params.get("dis_recent_n"):
             number_of_dates = int(params["dis_recent_n"])
-            
+
         # Isolate the search output
         output_dir = Path(BASE_OUTPUT_DIR) / f"search_outputs_{run_id}"
-        
-        # Strip prefixes for standard search engine compatibility if explicit targets are used
+
+        # Strip prefixes for standard search engine compatibility
         np_prod = None
         if target_products:
-            np_prod = [p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in target_products]
+            np_prod = [
+                p.replace("OPERA_L3_", "").replace("OPERA_L2_", "")
+                for p in target_products
+            ]
 
         # Execute the search natively in Python (instead of via subprocess)
         result_dir = run_search_only(
-            bbox=bbox, 
+            bbox=bbox,
             output_dir=output_dir,
             product=np_prod,
             date=pipeline_date,
             number_of_dates=number_of_dates,
-            compute_cloudiness=bool(params.get("opt_cloud", False))
+            compute_cloudiness=bool(params.get("opt_cloud", False)),
         )
-        
-        # Cache the search signature and folder path for potential reuse in the disasters workflow
+
+        # Cache search signature and folder path for reuse in the disasters workflow
         if result_dir:
-            # Record a "signature" of the exact UI inputs used to generate this search and resulting folder path
+            # Record a "signature" of the exact UI inputs used
             LAST_SEARCH_CACHE["signature"] = _get_search_signature(params)
             LAST_SEARCH_CACHE["folder"] = result_dir
 
             _update_run_state(run_id, latest_folder=str(result_dir))
         else:
             _update_run_state(run_id, error="Search exited gracefully without outputs.")
-            
+
     except Exception as e:
         _update_run_state(run_id, error=str(e))
     finally:
@@ -213,15 +225,17 @@ def run_disasters(run_id, params):
     Checks the cache first to see if it can skip the cloud search phase.
     """
     run_state = _get_run_state(run_id)
-    if run_state is None: return
+    if run_state is None:
+        return
 
     try:
         bbox = [
             float(params["lat_min"]),
             float(params["lat_max"]),
             float(params["lon_min"]),
-            float(params["lon_max"])]
-            
+            float(params["lon_max"]),
+        ]
+
         products = params.get("products", [])
         target_products = products if products and "all" not in products else None
 
@@ -249,9 +263,12 @@ def run_disasters(run_id, params):
         # Calculate the signature of the current UI inputs (check cache)
         current_sig = _get_search_signature(params)
         local_dir = None
-        
+
         # If current UI inputs match UI inputs of the last search, grab folder from cache
-        if LAST_SEARCH_CACHE["signature"] == current_sig and LAST_SEARCH_CACHE["folder"]:
+        if (
+            LAST_SEARCH_CACHE["signature"] == current_sig
+            and LAST_SEARCH_CACHE["folder"]
+        ):
             local_dir = Path(LAST_SEARCH_CACHE["folder"])
 
         output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
@@ -342,10 +359,10 @@ def process_bbox():
     search_type = data.get("search_type", ["opera_search"])
     if isinstance(search_type, str):
         search_type = [search_type]
-    
+
     # Track targets dynamically to allow multi-select concurrency
     targets = []
-    
+
     if "disasters" in search_type or "all" in search_type:
         targets.append(run_disasters)
     else:
@@ -360,11 +377,11 @@ def process_bbox():
 
     # Create a unified run ID for this combination request
     run_id = _create_run(search_type)
-    
+
     # Spawn a separate thread for every active target
     for target in targets:
         threading.Thread(target=target, args=(run_id, data), daemon=True).start()
-        
+
     return jsonify({"status": "processing started", "run_id": run_id})
 
 
