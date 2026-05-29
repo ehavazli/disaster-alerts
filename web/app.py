@@ -595,6 +595,8 @@ def show_maps():
         with open(log_file, "r") as f:
             log_content = html.escape(f.read())
 
+    log_html = f"<pre>{log_content}</pre>" if log_content.strip() else ""
+
     search_type = run_state.get("search_type", ["opera_search"])
     if isinstance(search_type, str):
         search_type = [search_type]
@@ -744,7 +746,7 @@ def show_maps():
         </style>
       </head>
       <body>
-        <pre>{log_content}</pre>
+        {log_html}
         <div class="maps-row">
             {iframes}
             {geotiff_viewer}
