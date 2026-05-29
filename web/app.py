@@ -172,8 +172,7 @@ def run_overpasses_only(run_id, params):
         if params.get("drcs") == "yes" and params.get("np_event_date"):
             cmd.extend(["-g", params["np_event_date"]])
 
-        # Take a snapshot of folders before running, execute,
-        # then find the newly created folder
+        # Take a snapshot of folders before running/execute, find new folder
         before_folders = set(
             glob.glob(os.path.join(BASE_OUTPUT_DIR, "nextpass_outputs_*"))
         )
@@ -219,7 +218,8 @@ def run_opera_search(run_id, params):
         # While this is search, map the advanced Disasters date panel logic
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
-        
+        number_of_dates = 5
+
         if date_strat == "single":
             pipeline_date = params.get("dis_single_date")
         elif date_strat == "range":
@@ -297,6 +297,7 @@ def run_disasters(run_id, params):
         # Parse the Disasters Date panel logic
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
+        number_of_dates = 5
 
         if date_strat == "single":
             pipeline_date = params.get("dis_single_date")
@@ -321,12 +322,12 @@ def run_disasters(run_id, params):
         current_sig = _get_search_signature(params)
         local_dir = None
 
+        # Take a frozen snapshot to prevent race conditions
+        cache_snap = LAST_SEARCH_CACHE.snapshot()
+
         # If current UI inputs match UI inputs of the last search, grab folder from cache
-        if (
-            LAST_SEARCH_CACHE["signature"] == current_sig
-            and LAST_SEARCH_CACHE["folder"]
-        ):
-            local_dir = Path(LAST_SEARCH_CACHE["folder"])
+        if cache_snap["signature"] == current_sig and cache_snap["folder"]:
+            local_dir = Path(cache_snap["folder"])
 
         output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -417,17 +418,19 @@ def process_bbox():
     if isinstance(search_type, str):
         search_type = [search_type]
 
-    # Track targets dynamically to allow multi-select concurrency
     targets = []
 
+    # Determine which processing function to run based on the search type
     if "disasters" in search_type or "all" in search_type:
         targets.append(run_disasters)
-    else:
-        # Check independent toggles when a full pipeline run isn't requested
-        if "opera_search" in search_type:
-            targets.append(run_opera_search)
-        if "overpasses" in search_type:
-            targets.append(run_overpasses_only)
+    elif "opera_search" in search_type and "overpasses" in search_type:
+        data["functionality"] = "both"
+        targets.append(run_opera_search)
+    elif "opera_search" in search_type:
+        data["functionality"] = "opera_search"
+        targets.append(run_opera_search)
+    elif "overpasses" in search_type:
+        targets.append(run_overpasses_only)
 
     if not targets:
         return jsonify({"error": "No valid workflows selected"}), 400
@@ -459,15 +462,23 @@ def processing_status():
 
 
 # ---- Serve maps from latest next-pass folder ----
-@app.route("/maps/<run_id>/<filename>")
+@app.route("/maps/<run_id>/<path:filename>")
 def maps(run_id, filename):
     run_state = _get_run_state(run_id)
     if run_state is None:
         return f"Unknown run: {run_id}", 404
 
     folder = run_state.get("latest_folder")
-    if folder and os.path.exists(os.path.join(folder, filename)):
-        return send_from_directory(folder, filename)
+    if not folder:
+        return f"No folder matched for run: {run_id}", 404
+
+    file_path = os.path.join(folder, filename)
+
+    if os.path.exists(file_path):
+        directory = os.path.dirname(file_path)
+        name = os.path.basename(file_path)
+        return send_from_directory(directory, name)
+
     return f"File {filename} not found", 404
 
 
