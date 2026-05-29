@@ -454,7 +454,7 @@ def run_disasters(run_id, params):
                     mode_dir = res_dir
 
         if mode_dir and mode_dir.exists():
-            _update_run_state(run_id, latest_folder=str(mode_dir))
+            _update_run_state(run_id, latest_folder=str(output_dir))
         else:
             _update_run_state(
                 run_id, error="Processing exited without generating a mode folder."
@@ -627,7 +627,12 @@ def show_maps():
         # Walk through output folder to catch all mosaics
         for root, _, files in os.walk(folder):
             for file in files:
-                if file.endswith(".tif"):
+                # Skip RTC (too heavy for browser RAM) and temporary files
+                if (
+                    file.endswith(".tif")
+                    and "RTC" not in file
+                    and not file.startswith(("tmp_", "."))
+                ):
                     rel_path = os.path.relpath(os.path.join(root, file), folder)
                     url_path = rel_path.replace(os.sep, "/")
                     url = f"/maps/{run_id}/{url_path}"
@@ -637,14 +642,27 @@ def show_maps():
                         "OPERA_L2_", ""
                     )
 
-                    match = re.search(r"_(\d{8})T\d+", display_name)
-                    if match:
-                        date_str = match.group(1)
-                        base_name = display_name.split(f"_{date_str}")[0]
-                        display_name = (
-                            f"{base_name}"
-                            f" ({date_str[:4]}-{date_str[4:6]}-{date_str[6:]})"
-                        )
+                    date_matches = re.findall(r"\d{8}T\d+[A-Za-z]*", display_name)
+
+                    if date_matches:
+                        for d in date_matches:
+                            date_str = d[:8]
+                            time_str = d[9:13]
+
+                            # Format time
+                            if len(time_str) == 4:
+                                formatted_time = f"{time_str[:2]}:{time_str[2:]}"
+                            else:
+                                formatted_time = time_str
+
+                            # Use square brackets so it looks clean
+                            ds = date_str
+                            f_date = f" [{ds[:4]}-{ds[4:6]}-{ds[6:]} {formatted_time}] "
+                            display_name = display_name.replace(d, f_date)
+
+                    # Cleanly replace underscores with spaces and fix any double spaces
+                    display_name = display_name.replace("_", " ").strip()
+                    display_name = re.sub(r"\s+", " ", display_name)
 
                     tif_layers_json.append({"url": url, "name": display_name})
 
@@ -671,7 +689,9 @@ def show_maps():
                 var map = L.map('geotiff-map', {{
                     center: [0, 0],
                     zoom: 2,
-                    layers: [satellite]
+                    layers: [satellite],
+                    wheelDebounceTime: 150,
+                    zoomAnimation: false
                 }});
 
                 var baseMaps = {{
@@ -688,17 +708,49 @@ def show_maps():
                 var bounds = null;
                 var loadedCount = 0;
 
+                function tryFitBounds() {{
+                    loadedCount++;
+                    if (loadedCount === tifLayers.length && bounds) {{
+                        map.fitBounds(bounds);
+                    }}
+                }}
+
                 tifLayers.forEach(function(layerInfo, index) {{
                     fetch(layerInfo.url)
-                      .then(response => response.arrayBuffer())
+                      .then(response => {{
+                          if (!response.ok) throw new Error("Fetch failed");
+                          return response.arrayBuffer();
+                      }})
                       .then(arrayBuffer => {{
                         parseGeoraster(arrayBuffer).then(function(georaster) {{
 
-                          var layer = new GeoRasterLayer({{
+                          var layerOptions = {{
                               georaster: georaster,
                               opacity: 0.8,
-                              resolution: 256
-                          }});
+                              resolution: 256,
+                              pixelValuesToColorFn: function(values) {{
+                                  var val = values[0];
+
+                                  if (val === 255 || isNaN(val)) return null;
+
+                                  if (georaster.palette && georaster.palette[val]) {{
+                                    var c = georaster.palette[val];
+                                    var rgbStr = 'rgb(' +
+                                        c[0] + ',' +
+                                        c[1] + ',' +
+                                        c[2] + ')';
+                                    return rgbStr;
+                                }}
+
+                                  if (layerInfo.name.includes('CONF')) {{
+                                      return 'rgba(147, 51, 234, ' + (val/100) + ')';
+                                  }}
+
+                                  return '#10b981';
+                              }}
+                          }};
+
+                          var layer = new GeoRasterLayer(layerOptions);
 
                           if (index === 0) {{
                               layer.addTo(map);
@@ -712,11 +764,15 @@ def show_maps():
                               bounds.extend(layer.getBounds());
                           }}
 
-                          loadedCount++;
-                          if (loadedCount === tifLayers.length && bounds) {{
-                              map.fitBounds(bounds);
-                          }}
+                          tryFitBounds();
+                        }}).catch(e => {{
+                            console.error("Parse error for " + layerInfo.name, e);
+                            tryFitBounds();
                         }});
+                      }}).catch(e => {{
+                          var msg = "Network or Memory error for " + layerInfo.name;
+                          console.error(msg, e);
+                          tryFitBounds();
                       }});
                 }});
             </script>
