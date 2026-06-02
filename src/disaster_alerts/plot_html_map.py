@@ -185,6 +185,7 @@ def _generate_events_html_map(
                         position: relative; display: inline-block;
                     }
                     .multi-dropdown-btn {
+                        position: relative;
                         border: 1px solid #9ca3af; border-radius: 4px;
                         padding: 4px 24px 4px 8px; font-size: 13px;
                         background-color: #ffffff; height: 34px; cursor: pointer;
