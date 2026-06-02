@@ -123,11 +123,11 @@ def run_next_pass(run_id, params):
         search_type = params.get("search_type", ["opera_search"])
         if isinstance(search_type, str):
             search_type = [search_type]
-            
+
         # Ensure "all" is caught correctly for both functionalities
         has_overpasses = "overpasses" in search_type or "all" in search_type
         has_opera = "opera_search" in search_type or "all" in search_type
-        
+
         if has_overpasses and has_opera:
             functionality = "both"
         elif has_overpasses:
@@ -146,7 +146,9 @@ def run_next_pass(run_id, params):
         if products and "all" not in products:
             cmd.append("-p")
             # Strip the prefix so next_pass doesn't double it!
-            clean_prods = [p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in products]
+            clean_prods = [
+                p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in products
+            ]
             cmd.extend(clean_prods)
 
         # 5) Add Lookback (-k)
@@ -195,7 +197,7 @@ def run_disasters(run_id, params):
         return
 
     try:
-        # Parse Bounding Box 
+        # Parse Bounding Box
         bbox = [
             float(params["lat_min"]),
             float(params["lat_max"]),
@@ -211,20 +213,25 @@ def run_disasters(run_id, params):
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
         number_of_dates = 5
-        
-        if date_strat == "single": 
+
+        if date_strat == "single":
             pipeline_date = params.get("dis_single_date")
+            if not pipeline_date:
+                raise ValueError("dis_single_date is required for single-date mode")
         elif date_strat == "range":
-            if params.get("dis_start_date") and params.get("dis_end_date"):
-                pipeline_date = f"{params['dis_start_date']}/{params['dis_end_date']}"
-        elif params.get("dis_recent_n"):
-            number_of_dates = int(params["dis_recent_n"])
+            start_date = params.get("dis_start_date")
+            end_date = params.get("dis_end_date")
+            if not start_date or not end_date:
+                raise ValueError(
+                    "dis_start_date and dis_end_date are required for range mode"
+                )
+        elif date_strat == "recent":
+            recent_n = params.get("dis_recent_n")
+            number_of_dates = int(recent_n) if str(recent_n).isdigit() else 5
+        else:
+            raise ValueError(f"Unsupported dis_date_strat: {date_strat}")
 
-        search_type = params.get("search_type", ["opera_search"])
-        if isinstance(search_type, str):
-            search_type = [search_type]
-
-        # Setup Isolated Output Directory 
+        # Setup Isolated Output Directory
         output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -236,38 +243,47 @@ def run_disasters(run_id, params):
             date=pipeline_date,
             number_of_dates=number_of_dates,
             layout_title=(
-                 f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – "
-                 f"{bbox[1]:.2f},{bbox[3]:.2f})"
-             ),
+                f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – "
+                f"{bbox[1]:.2f},{bbox[3]:.2f})"
+            ),
             reclassify_snow_ice=bool(params.get("opt_rc", False)),
             compute_cloudiness=bool(params.get("opt_cloud", False)),
             no_mask=bool(params.get("opt_nomask", False)),
             filter_date=params.get("opt_fd") or None,
-            slope_threshold=int(params["opt_st"]) if str(params.get("opt_st")).isdigit() else None
+            slope_threshold=(
+                int(params["opt_st"]) if str(params.get("opt_st")).isdigit() else None
+            ),
         )
-    
-        print(f"Running disasters pipeline: product={config.product}, bbox={config.bbox}")
-        
+
+        print(
+            f"Running disasters pipeline: product={config.product}, bbox={config.bbox}"
+        )
+
         # Route execution based on UI dropdown
         dis_action = params.get("dis_action", "run")
         returned_dir = None
 
         if dis_action == "download":
             from disasters.pipeline import run_download_only
-            returned_dir = run_download_only(bbox=config.bbox, output_dir=config.output_dir, product=config.product)
+
+            returned_dir = run_download_only(
+                bbox=config.bbox, output_dir=config.output_dir, product=config.product
+            )
         else:
             returned_dir = run_pipeline(config)
 
-        # Register Success/Failure using the returned artifacts, NOT the pre-created directory
+        # Register Success/Failure using the returned artifacts.
         if returned_dir and Path(returned_dir).exists():
             _update_run_state(run_id, latest_folder=str(returned_dir))
             print(f"Success! Output folder: {returned_dir}")
         else:
             _update_run_state(
                 run_id,
-                error="Processing finished, but no valid output artifacts were produced."
+                error=(
+                    "Processing finished, but no valid output artifacts were produced."
+                ),
             )
-            
+
     except Exception as e:
         _update_run_state(run_id, error=str(e))
         print(f"Error running disasters pipeline: {e}")
