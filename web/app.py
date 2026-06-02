@@ -30,7 +30,33 @@ processing_runs = {}
 processing_runs_lock = threading.Lock()
 
 
-LAST_SEARCH_CACHE = {"signature": None, "folder": None}
+class _ThreadSafeSearchCache:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data = {"signature": None, "folder": None}
+
+    def __getitem__(self, key):
+        with self._lock:
+            return self._data[key]
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            self._data[key] = value
+
+    def get(self, key, default=None):
+        with self._lock:
+            return self._data.get(key, default)
+
+    def update(self, **kwargs):
+        with self._lock:
+            self._data.update(kwargs)
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._data)
+
+
+LAST_SEARCH_CACHE = _ThreadSafeSearchCache()
 
 
 def _get_search_signature(params):
@@ -205,10 +231,10 @@ def run_opera_search(run_id, params):
 
         # Cache search signature and folder path for reuse in the disasters workflow
         if result_dir:
-            # Record a "signature" of the exact UI inputs used
-            LAST_SEARCH_CACHE["signature"] = _get_search_signature(params)
-            LAST_SEARCH_CACHE["folder"] = result_dir
-
+            # Record a "signature" of the exact UI inputs used safely
+            LAST_SEARCH_CACHE.update(
+                signature=_get_search_signature(params), folder=result_dir
+            )
             _update_run_state(run_id, latest_folder=str(result_dir))
         else:
             _update_run_state(run_id, error="Search exited gracefully without outputs.")
@@ -264,7 +290,7 @@ def run_disasters(run_id, params):
         current_sig = _get_search_signature(params)
         local_dir = None
 
-        # If current UI inputs match UI inputs of the last search, grab folder from cache
+        # Use the thread-safe dictionary fetch
         if (
             LAST_SEARCH_CACHE["signature"] == current_sig
             and LAST_SEARCH_CACHE["folder"]
