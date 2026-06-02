@@ -212,13 +212,17 @@ def run_opera_search(run_id, params):
         date_strat = params.get("dis_date_strat", "range")
         pipeline_date = None
         number_of_dates = 5
+
         if date_strat == "single":
             pipeline_date = params.get("dis_single_date")
         elif date_strat == "range":
             if params.get("dis_start_date") and params.get("dis_end_date"):
                 pipeline_date = f"{params['dis_start_date']}/{params['dis_end_date']}"
-        elif params.get("dis_recent_n"):
-            number_of_dates = int(params["dis_recent_n"])
+        elif date_strat == "recent":
+            r_val = params.get("dis_recent_n")
+            if isinstance(r_val, str):
+                r_val = r_val.strip()
+            number_of_dates = int(r_val) if r_val and str(r_val).isdigit() else 5
 
         # Isolate the search output
         output_dir = Path(BASE_OUTPUT_DIR) / f"search_outputs_{run_id}"
@@ -293,8 +297,10 @@ def run_disasters(run_id, params):
                     "dis_start_date and dis_end_date are required for range mode"
                 )
         elif date_strat == "recent":
-            recent_n = params.get("dis_recent_n")
-            number_of_dates = int(recent_n) if str(recent_n).isdigit() else 5
+            r_val = params.get("dis_recent_n")
+            if isinstance(r_val, str):
+                r_val = r_val.strip()
+            number_of_dates = int(r_val) if r_val and str(r_val).isdigit() else 5
         else:
             raise ValueError(f"Unsupported dis_date_strat: {date_strat}")
 
