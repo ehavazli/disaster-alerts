@@ -86,10 +86,11 @@ def _list_output_folders():
     )
 
 
-def _create_run(search_type):
+def _create_run(search_type, task_count=1):
     run_id = uuid.uuid4().hex
     run_state = {
         "running": True,
+        "active_tasks": task_count,
         "latest_folder": None,
         "error": None,
         "search_type": search_type or ["opera_search"],
@@ -116,6 +117,17 @@ def _update_run_state(run_id, **updates):
         if run_state is None:
             return
         run_state.update(updates)
+
+
+def _mark_task_complete(run_id):
+    """Safely decrements the active task counter and marks run false when 0."""
+    with processing_runs_lock:
+        run_state = processing_runs.get(run_id)
+        if run_state is None:
+            return
+        run_state["active_tasks"] -= 1
+        if run_state["active_tasks"] <= 0:
+            run_state["running"] = False
 
 
 def run_overpasses_only(run_id, params):
@@ -172,7 +184,7 @@ def run_overpasses_only(run_id, params):
     except Exception as e:
         _update_run_state(run_id, error=str(e))
     finally:
-        _update_run_state(run_id, running=False)
+        _mark_task_complete(run_id)
 
 
 def run_opera_search(run_id, params):
@@ -242,7 +254,7 @@ def run_opera_search(run_id, params):
     except Exception as e:
         _update_run_state(run_id, error=str(e))
     finally:
-        _update_run_state(run_id, running=False)
+        _mark_task_complete(run_id)
 
 
 def run_disasters(run_id, params):
@@ -352,7 +364,7 @@ def run_disasters(run_id, params):
     except Exception as e:
         _update_run_state(run_id, error=str(e))
     finally:
-        _update_run_state(run_id, running=False)
+        _mark_task_complete(run_id)
 
 
 # ---- Serve original map ----
@@ -401,8 +413,8 @@ def process_bbox():
     if not targets:
         return jsonify({"error": "No valid workflows selected"}), 400
 
-    # Create a unified run ID for this combination request
-    run_id = _create_run(search_type)
+    # Create a unified run ID for this request, injecting the target count
+    run_id = _create_run(search_type, task_count=len(targets))
 
     # Spawn a separate thread for every active target
     for target in targets:
