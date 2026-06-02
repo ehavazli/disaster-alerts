@@ -60,22 +60,29 @@ LAST_SEARCH_CACHE = _ThreadSafeSearchCache()
 
 
 def _get_search_signature(params):
-    return str(
-        {
-            "bbox": [
-                params.get("lat_min"),
-                params.get("lat_max"),
-                params.get("lon_min"),
-                params.get("lon_max"),
-            ],
-            "products": params.get("products", []),
-            "date_strat": params.get("dis_date_strat"),
-            "recent_n": params.get("dis_recent_n"),
-            "single_date": params.get("dis_single_date"),
-            "start_date": params.get("dis_start_date"),
-            "end_date": params.get("dis_end_date"),
-        }
-    )
+    import json
+
+    prods = params.get("products") or []
+    sats = params.get("satellites") or []
+
+    sig_dict = {
+        "bbox": [
+            params.get("lat_min"),
+            params.get("lat_max"),
+            params.get("lon_min"),
+            params.get("lon_max"),
+        ],
+        "products": sorted(prods),
+        "satellites": sorted(sats),
+        "date_strat": params.get("dis_date_strat"),
+        "recent_n": params.get("dis_recent_n"),
+        "single_date": params.get("dis_single_date"),
+        "start_date": params.get("dis_start_date"),
+        "end_date": params.get("dis_end_date"),
+        "opt_cloud": bool(params.get("opt_cloud", False)),
+    }
+
+    return json.dumps(sig_dict, sort_keys=True)
 
 
 def _list_output_folders():
