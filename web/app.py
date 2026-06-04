@@ -123,8 +123,11 @@ def run_next_pass(run_id, params):
         search_type = params.get("search_type", ["opera_search"])
         if isinstance(search_type, str):
             search_type = [search_type]
-        has_overpasses = "overpasses" in search_type
-        has_opera = "opera_search" in search_type
+
+        # Ensure "all" is caught correctly for both functionalities
+        has_overpasses = "overpasses" in search_type or "all" in search_type
+        has_opera = "opera_search" in search_type or "all" in search_type
+
         if has_overpasses and has_opera:
             functionality = "both"
         elif has_overpasses:
@@ -142,7 +145,11 @@ def run_next_pass(run_id, params):
         products = params.get("products", [])
         if products and "all" not in products:
             cmd.append("-p")
-            cmd.extend(products)
+            # Strip the prefix so next_pass doesn't double it!
+            clean_prods = [
+                p.replace("OPERA_L3_", "").replace("OPERA_L2_", "") for p in products
+            ]
+            cmd.extend(clean_prods)
 
         # 5) Add Lookback (-k)
         if params.get("lookback") and str(params["lookback"]).isdigit():
@@ -184,11 +191,13 @@ def run_disasters(run_id, params):
     """
     Runs the full disasters pipeline (search + mosaic + layouts).
     """
+    # Retrieve the shared state object for this specific run ID to track progress
     run_state = _get_run_state(run_id)
     if run_state is None:
         return
 
     try:
+        # Parse Bounding Box
         bbox = [
             float(params["lat_min"]),
             float(params["lat_max"]),
@@ -196,47 +205,90 @@ def run_disasters(run_id, params):
             float(params["lon_max"]),
         ]
 
+        # Parse Selected Product (Allow multiple products)
+        products = params.get("products", [])
+        target_products = products if products and "all" not in products else None
+
+        # Parse Date Strategy
+        date_strat = params.get("dis_date_strat", "range")
+        pipeline_date = None
         number_of_dates = 5
-        if params.get("lookback") and str(params["lookback"]).isdigit():
-            number_of_dates = int(params["lookback"])
 
-        search_type = params.get("search_type", ["opera_search"])
-        if isinstance(search_type, str):
-            search_type = [search_type]
+        if date_strat == "single":
+            pipeline_date = params.get("dis_single_date")
+            if not pipeline_date:
+                raise ValueError("dis_single_date is required for single-date mode")
+        elif date_strat == "range":
+            start_date = params.get("dis_start_date")
+            end_date = params.get("dis_end_date")
+            if not start_date or not end_date:
+                raise ValueError(
+                    "dis_start_date and dis_end_date are required for range mode"
+                )
+        elif date_strat == "recent":
+            recent_n = params.get("dis_recent_n")
+            number_of_dates = int(recent_n) if str(recent_n).isdigit() else 5
+        else:
+            raise ValueError(f"Unsupported dis_date_strat: {date_strat}")
 
+        # Setup Isolated Output Directory
+        output_dir = Path(BASE_OUTPUT_DIR) / f"disasters_outputs_{run_id}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build Configuration
         config = PipelineConfig(
             bbox=bbox,
-            output_dir=Path(BASE_OUTPUT_DIR),
-            layout_title=(
-                f"Disaster Analysis ({bbox[0]},{bbox[2]} – {bbox[1]},{bbox[3]})"
-            ),
-            date=None,
+            output_dir=output_dir,
+            product=target_products,
+            date=pipeline_date,
             number_of_dates=number_of_dates,
-            mode=params.get("mode", "flood"),
-            functionality="both" if "all" in search_type else "opera_search",
+            layout_title=(
+                f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} – "
+                f"{bbox[1]:.2f},{bbox[3]:.2f})"
+            ),
+            reclassify_snow_ice=bool(params.get("opt_rc", False)),
+            compute_cloudiness=bool(params.get("opt_cloud", False)),
+            no_mask=bool(params.get("opt_nomask", False)),
+            filter_date=params.get("opt_fd") or None,
+            slope_threshold=(
+                int(params["opt_st"]) if str(params.get("opt_st")).isdigit() else None
+            ),
         )
 
-        print(f"Running disasters pipeline: mode={config.mode}, bbox={config.bbox}")
-        run_pipeline(config)
-
-        output_folder = _find_run_output_folder(
-            run_state["known_folders"], run_state["started_at"]
+        print(
+            f"Running disasters pipeline: product={config.product}, bbox={config.bbox}"
         )
-        if output_folder:
-            _update_run_state(run_id, latest_folder=output_folder)
-            print(f"Success! Output folder: {output_folder}")
+
+        # Route execution based on UI dropdown
+        dis_action = params.get("dis_action", "run")
+        returned_dir = None
+
+        if dis_action == "download":
+            from disasters.pipeline import run_download_only
+
+            returned_dir = run_download_only(
+                bbox=config.bbox, output_dir=config.output_dir, product=config.product
+            )
+        else:
+            returned_dir = run_pipeline(config)
+
+        # Register Success/Failure using the returned artifacts.
+        if returned_dir and Path(returned_dir).exists():
+            _update_run_state(run_id, latest_folder=str(returned_dir))
+            print(f"Success! Output folder: {returned_dir}")
         else:
             _update_run_state(
                 run_id,
                 error=(
-                    "Processing finished, but no output folder could be matched to this"
-                    " run."
+                    "Processing finished, but no valid output artifacts were produced."
                 ),
             )
+
     except Exception as e:
         _update_run_state(run_id, error=str(e))
         print(f"Error running disasters pipeline: {e}")
     finally:
+        # Always mark the job as finished, regardless of success or failure
         _update_run_state(run_id, running=False)
 
 
@@ -270,7 +322,7 @@ def process_bbox():
     search_type = data.get("search_type", ["opera_search"])
     if isinstance(search_type, str):
         search_type = [search_type]
-    uses_disasters = "all" in search_type or "mosaicking" in search_type
+    uses_disasters = "all" in search_type or "disasters" in search_type
     target = run_disasters if uses_disasters else run_next_pass
     run_id = _create_run(search_type)
     threading.Thread(target=target, args=(run_id, data), daemon=True).start()
@@ -340,9 +392,9 @@ def show_maps():
     opera_map = "opera_products_map.html"
     drcs_map = "opera_products_drcs_map.html"
 
-    uses_disasters = "all" in search_type or "mosaicking" in search_type
+    uses_disasters = "all" in search_type or "disasters" in search_type
     show_sat = "overpasses" in search_type or "all" in search_type
-    show_opera = any(v in search_type for v in ("opera_search", "mosaicking", "all"))
+    show_opera = any(v in search_type for v in ("opera_search", "disasters", "all"))
     show_drcs = (
         (not uses_disasters)
         and show_opera
