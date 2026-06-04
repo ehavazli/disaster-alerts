@@ -146,6 +146,75 @@ def _mark_task_complete(run_id):
             run_state["running"] = False
 
 
+def generate_web_png(tif_path, png_path):
+    """Converts a local GeoTIFF to a transparent web-ready PNG
+    using embedded colormaps when available, otherwise applying a sequential Reds scheme.
+    """
+
+    import numpy as np
+    import rasterio
+    from PIL import Image
+    from rasterio.warp import transform_bounds
+
+    with rasterio.open(tif_path) as src:
+        # Convert native projection coordinates to global Lat/Lng for Leaflet
+        bounds = transform_bounds(src.crs, "EPSG:4326", *src.bounds)
+        leaflet_bounds = [[bounds[1], bounds[0]], [bounds[3], bounds[2]]]
+
+        # Read data
+        data = src.read(1)
+        h, w = data.shape
+        rgba = np.zeros((h, w, 4), dtype=np.uint8)
+
+        # Extract nodata value
+        nodata_val = src.nodata if src.nodata is not None else 255
+        nodata_mask = (data == nodata_val) | (data == 255) | (data == 0)
+
+        try:
+            cmap = src.colormap(1)
+        except ValueError:
+            cmap = None
+
+        # If present, apply the embedded color table
+        if cmap:
+            for pixel_value, rgba_color in cmap.items():
+                rgba[data == pixel_value] = rgba_color
+
+        # If no embedded color table, apply 'Reds' sequential colormap
+        else:
+            valid_pixels = data[~nodata_mask]
+            if valid_pixels.size > 0:
+                d_min, d_max = int(valid_pixels.min()), int(valid_pixels.max())
+
+                if d_max > d_min:
+                    # Cast to float transiently for color gradient ratio calculation
+                    norm = (data.astype(np.float32) - d_min) / (d_max - d_min)
+                    norm = np.clip(norm, 0.0, 1.0)
+                else:
+                    norm = np.zeros_like(data, dtype=np.float32)
+
+                # Sequential Reds Curve: High integer anomaly values yield stark Red
+                rgba[..., 0] = 255  # Max Red
+                rgba[..., 1] = (255 * (1.0 - norm * 0.85)).astype(
+                    np.uint8
+                )  # Green Channel
+                rgba[..., 2] = (255 * (1.0 - norm * 0.85)).astype(
+                    np.uint8
+                )  # Blue Channel
+                rgba[..., 3] = 216  # Clean baseline opacity
+            else:
+                rgba[..., 3] = 0
+
+        # Enforce transparency for nodata pixels
+        rgba[nodata_mask] = [0, 0, 0, 0]
+
+        # Compress and save out the web asset
+        img = Image.fromarray(rgba, "RGBA")
+        img.save(png_path, "PNG")
+
+        return leaflet_bounds
+
+
 def run_overpasses_only(run_id, params):
     """
     Builds the command line arguments based on the dashboard panel selections.
@@ -567,8 +636,7 @@ def maps(run_id, filename):
 def show_maps():
     """
     Display run_output.txt first, then the maps below it.
-    Renders GeoTIFFs natively for Disasters workflows, or HTML iframes for Next Pass.
-    Shows a third DRCS map if opera_products_drcs_map.html was produced.
+    Renders web-optimized PNG overlays using embedded colormaps for Disasters.
     """
     run_id = request.args.get("run_id")
     run_state = _get_run_state(run_id)
@@ -605,14 +673,12 @@ def show_maps():
 
     uses_disasters = "disasters" in search_type or "all" in search_type
 
-    # Recursively search the parent folder for the HTML maps
     sat_map_path = next(Path(folder).rglob("satellite_overpasses_map.html"), None)
     opera_map_path = next(Path(folder).rglob("opera_products_map.html"), None)
 
     show_sat = sat_map_path is not None
     show_opera = opera_map_path is not None
 
-    # Handle Next Pass & Opera Search (HTML iFrames)
     iframes = ""
     if show_sat:
         rel_sat = os.path.relpath(sat_map_path, folder).replace(os.sep, "/")
@@ -621,166 +687,112 @@ def show_maps():
         rel_opera = os.path.relpath(opera_map_path, folder).replace(os.sep, "/")
         iframes += f'<iframe src="/maps/{run_id}/{rel_opera}"></iframe>'
 
-    # Handle Disasters Workflow (Dynamic Leaflet GeoTIFF Layer Controls)
+    # Loop through and convert TIF files to PNG on-the-fly
     geotiff_viewer = ""
     tif_layers_json = []
 
     if uses_disasters:
-        # Walk through output folder to catch all mosaics
         for root, _, files in os.walk(folder):
             for file in files:
-                # Skip RTC (too heavy for browser RAM) and temporary files
                 if (
                     file.endswith(".tif")
                     and "RTC" not in file
                     and not file.startswith(("tmp_", "."))
                 ):
-                    rel_path = os.path.relpath(os.path.join(root, file), folder)
-                    url_path = rel_path.replace(os.sep, "/")
-                    url = f"/maps/{run_id}/{url_path}"
+                    full_tif_path = os.path.join(root, file)
+                    full_png_path = full_tif_path.replace(".tif", ".png")
 
-                    display_name = file.replace("_mosaic", "").replace(".tif", "")
-                    display_name = display_name.replace("OPERA_L3_", "").replace(
-                        "OPERA_L2_", ""
-                    )
+                    try:
+                        img_bounds = generate_web_png(full_tif_path, full_png_path)
 
-                    date_matches = re.findall(r"\d{8}T\d+[A-Za-z]*", display_name)
+                        rel_path = os.path.relpath(full_png_path, folder)
+                        url_path = rel_path.replace(os.sep, "/")
+                        url = f"/maps/{run_id}/{url_path}"
 
-                    if date_matches:
-                        for d in date_matches:
-                            date_str = d[:8]
-                            time_str = d[9:13]
+                        display_name = (
+                            file.replace("_mosaic", "")
+                            .replace(".tif", "")
+                            .replace("OPERA_L3_", "")
+                            .replace("OPERA_L2_", "")
+                        )
 
-                            # Format time
-                            if len(time_str) == 4:
-                                formatted_time = f"{time_str[:2]}:{time_str[2:]}"
-                            else:
-                                formatted_time = time_str
+                        date_matches = re.findall(r"\d{8}T\d+[A-Za-z]*", display_name)
+                        if date_matches:
+                            for d in date_matches:
+                                date_str = d[:8]
+                                time_str = d[9:13]
+                                formatted_time = (
+                                    f"{time_str[:2]}:{time_str[2:]}"
+                                    if len(time_str) == 4
+                                    else time_str
+                                )
+                                f_date = (
+                                    f" [{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+                                    f" {formatted_time}] "
+                                )
+                                display_name = display_name.replace(d, f_date)
 
-                            # Use square brackets so it looks clean
-                            ds = date_str
-                            f_date = f" [{ds[:4]}-{ds[4:6]}-{ds[6:]} {formatted_time}] "
-                            display_name = display_name.replace(d, f_date)
+                        display_name = display_name.replace("_", " ").strip()
+                        display_name = re.sub(r"\s+", " ", display_name)
 
-                    # Cleanly replace underscores with spaces and fix any double spaces
-                    display_name = display_name.replace("_", " ").strip()
-                    display_name = re.sub(r"\s+", " ", display_name)
+                        tif_layers_json.append(
+                            {"url": url, "name": display_name, "bounds": img_bounds}
+                        )
+                    except Exception as e:
+                        logging.error(f"Failed converting {file} to web PNG: {e}")
 
-                    tif_layers_json.append({"url": url, "name": display_name})
-
+        # If any valid GeoTIFFs, render the Leaflet viewer
         if tif_layers_json:
             geotiff_viewer = f"""
             <div id="geotiff-map" style="flex: 1; height: 100%;"></div>
             <link rel="stylesheet"
                   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-            <script src="https://unpkg.com/georaster"></script>
-            <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
             <script>
-                var osmUrl = 'https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png';
-                var osm = L.tileLayer(osmUrl, {{
-                    attribution: '&copy; OpenStreetMap contributors'
-                }});
-
-                var satUrl = 'https://server.arcgisonline.com/ArcGIS/rest/' +
-                             'services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}';
-                var satellite = L.tileLayer(satUrl, {{
-                    attribution: 'Tiles &copy; Esri'
-                }});
+                var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png');
+                var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}');
 
                 var map = L.map('geotiff-map', {{
                     center: [0, 0],
                     zoom: 2,
-                    layers: [satellite],
-                    wheelDebounceTime: 150,
-                    zoomAnimation: false
+                    layers: [satellite]
                 }});
 
-                var baseMaps = {{
-                    "Satellite": satellite,
-                    "OpenStreetMap": osm
-                }};
-
+                var baseMaps = {{ "Satellite": satellite, "OpenStreetMap": osm }};
                 var overlayMaps = {{}};
+
                 var layerControl = L.control.layers(
-                    baseMaps, overlayMaps, {{ collapsed: false }}
+                    baseMaps, overlayMaps, {{ collapsed: true }}
                 ).addTo(map);
 
-                var tifLayers = {json.dumps(tif_layers_json)};
-                var bounds = null;
-                var loadedCount = 0;
+                var layersData = {json.dumps(tif_layers_json)};
+                var globalBounds = null;
 
-                function tryFitBounds() {{
-                    loadedCount++;
-                    if (loadedCount === tifLayers.length && bounds) {{
-                        map.fitBounds(bounds);
+                layersData.forEach(function(layerInfo, index) {{
+                    var layer = L.imageOverlay(
+                        layerInfo.url, layerInfo.bounds, {{ opacity: 0.85 }}
+                    );
+
+                    if (index === 0) {{
+                        layer.addTo(map);
                     }}
-                }}
 
-                tifLayers.forEach(function(layerInfo, index) {{
-                    fetch(layerInfo.url)
-                      .then(response => {{
-                          if (!response.ok) throw new Error("Fetch failed");
-                          return response.arrayBuffer();
-                      }})
-                      .then(arrayBuffer => {{
-                        parseGeoraster(arrayBuffer).then(function(georaster) {{
+                    layerControl.addOverlay(layer, layerInfo.name);
 
-                          var layerOptions = {{
-                              georaster: georaster,
-                              opacity: 0.8,
-                              resolution: 256,
-                              pixelValuesToColorFn: function(values) {{
-                                  var val = values[0];
-
-                                  if (val === 255 || isNaN(val)) return null;
-
-                                  if (georaster.palette && georaster.palette[val]) {{
-                                    var c = georaster.palette[val];
-                                    var rgbStr = 'rgb(' +
-                                        c[0] + ',' +
-                                        c[1] + ',' +
-                                        c[2] + ')';
-                                    return rgbStr;
-                                }}
-
-                                  if (layerInfo.name.includes('CONF')) {{
-                                      return 'rgba(147, 51, 234, ' + (val/100) + ')';
-                                  }}
-
-                                  return '#10b981';
-                              }}
-                          }};
-
-                          var layer = new GeoRasterLayer(layerOptions);
-
-                          if (index === 0) {{
-                              layer.addTo(map);
-                          }}
-
-                          layerControl.addOverlay(layer, layerInfo.name);
-
-                          if (!bounds) {{
-                              bounds = layer.getBounds();
-                          }} else {{
-                              bounds.extend(layer.getBounds());
-                          }}
-
-                          tryFitBounds();
-                        }}).catch(e => {{
-                            console.error("Parse error for " + layerInfo.name, e);
-                            tryFitBounds();
-                        }});
-                      }}).catch(e => {{
-                          var msg = "Network or Memory error for " + layerInfo.name;
-                          console.error(msg, e);
-                          tryFitBounds();
-                      }});
+                    var lBounds = L.latLngBounds(layerInfo.bounds);
+                    if (!globalBounds) {{
+                        globalBounds = lBounds;
+                    }} else {{
+                        globalBounds.extend(lBounds);
+                    }}
                 }});
+
+                if (globalBounds) {{
+                    map.fitBounds(globalBounds);
+                }}
             </script>
             """
 
-    # Adjust styling based on what is being shown
     map_count = sum([show_sat, show_opera])
     if uses_disasters and tif_layers_json:
         map_count += 1
