@@ -324,6 +324,7 @@ def run_disasters(run_id, params):
                 raise ValueError(
                     "dis_start_date and dis_end_date are required for range mode"
                 )
+            pipeline_date = f"{start_date}/{end_date}"
         elif date_strat == "recent":
             r_val = params.get("dis_recent_n")
             if isinstance(r_val, str):
@@ -375,10 +376,11 @@ def run_disasters(run_id, params):
                 LAST_SEARCH_CACHE.update(signature=current_sig, folder=search_dir)
 
         # =========================================================
-        # PHASE 2: PROCESSING LOOP (From your 5ebe231 commit)
+        # PHASE 2: PROCESSING (Mosaics Individually)
         # =========================================================
         if not target_products and search_dir:
             from disasters.pipeline import read_opera_metadata
+
             try:
                 df_found = read_opera_metadata(search_dir)
                 if not df_found.empty and "Dataset" in df_found.columns:
@@ -389,69 +391,69 @@ def run_disasters(run_id, params):
         if not target_products:
             target_products = ["OPERA_L3_DSWX-HLS_V1"]
 
+        # Pass the entire list to the newly upgraded pipeline functions
         mode_dir = None
-        for single_product in target_products:
-            if action == "download":
-                res_dir = run_download_only(
-                    bbox=bbox,
+        if action == "download":
+            res_dir = run_download_only(
+                bbox=bbox,
+                output_dir=output_dir,
+                date=pipeline_date,
+                number_of_dates=number_of_dates,
+                product=target_products,
+                functionality=functionality,
+                compute_cloudiness=bool(params.get("opt_cloud", False)),
+            )
+            if res_dir:
+                mode_dir = res_dir
+
+        elif action == "mosaic":
+            data_dir = run_download_only(
+                bbox=bbox,
+                output_dir=output_dir,
+                date=pipeline_date,
+                number_of_dates=number_of_dates,
+                product=target_products,
+                functionality=functionality,
+                compute_cloudiness=bool(params.get("opt_cloud", False)),
+            )
+            if data_dir:
+                res_dir = run_mosaic_only(
+                    input_dir=data_dir,
                     output_dir=output_dir,
-                    date=pipeline_date,
-                    number_of_dates=number_of_dates,
-                    product=single_product,
-                    functionality=functionality,
-                    compute_cloudiness=bool(params.get("opt_cloud", False)),
+                    bbox=bbox,
+                    benchmark=False,
                 )
                 if res_dir:
                     mode_dir = res_dir
 
-            elif action == "mosaic":
-                data_dir = run_download_only(
-                    bbox=bbox,
-                    output_dir=output_dir,
-                    date=pipeline_date,
-                    number_of_dates=number_of_dates,
-                    product=single_product,
-                    functionality=functionality,
-                    compute_cloudiness=bool(params.get("opt_cloud", False)),
-                )
-                if data_dir:
-                    res_dir = run_mosaic_only(
-                        input_dir=data_dir,
-                        output_dir=output_dir,
-                        bbox=bbox,
-                        benchmark=False,
-                    )
-                    if res_dir:
-                        mode_dir = res_dir
-
-            else:
-                config = PipelineConfig(
-                    bbox=bbox,
-                    output_dir=output_dir,
-                    local_dir=None,
-                    search_dir=search_dir,
-                    product=single_product,
-                    functionality=functionality,
-                    satellites=satellites_list,
-                    date=pipeline_date,
-                    number_of_dates=number_of_dates,
-                    layout_title=(
-                        f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} –"
-                        f" {bbox[1]:.2f},{bbox[3]:.2f})"
-                    ),
-                    reclassify_snow_ice=bool(params.get("opt_rc", False)),
-                    compute_cloudiness=bool(params.get("opt_cloud", False)),
-                    no_mask=bool(params.get("opt_nomask", False)),
-                    filter_date=params.get("opt_fd") or None,
-                    slope_threshold=(
-                        int(params["opt_st"])
-                        if str(params.get("opt_st")).isdigit()
-                        else None
-                    ),
-                )
-                res_dir = run_pipeline(config)
-                if res_dir:
-                    mode_dir = res_dir
+        else:
+            config = PipelineConfig(
+                bbox=bbox,
+                output_dir=output_dir,
+                local_dir=None,
+                search_dir=search_dir,
+                product=target_products,
+                functionality=functionality,
+                satellites=satellites_list,
+                date=pipeline_date,
+                number_of_dates=number_of_dates,
+                layout_title=(
+                    f"Disaster Analysis ({bbox[0]:.2f},{bbox[2]:.2f} –"
+                    f" {bbox[1]:.2f},{bbox[3]:.2f})"
+                ),
+                reclassify_snow_ice=bool(params.get("opt_rc", False)),
+                compute_cloudiness=bool(params.get("opt_cloud", False)),
+                no_mask=bool(params.get("opt_nomask", False)),
+                filter_date=params.get("opt_fd") or None,
+                slope_threshold=(
+                    int(params["opt_st"])
+                    if str(params.get("opt_st")).isdigit()
+                    else None
+                ),
+            )
+            res_dir = run_pipeline(config)
+            if res_dir:
+                mode_dir = res_dir
 
         if mode_dir and mode_dir.exists():
             _update_run_state(run_id, latest_folder=str(output_dir))
