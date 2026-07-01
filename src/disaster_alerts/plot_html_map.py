@@ -328,6 +328,7 @@ def _generate_events_html_map(
                             <option value="run" selected>
                                 Full Pipeline (Maps & Layouts)
                             </option>
+                            <option value="mosaic">Mosaic GeoTIFFs Only</option>
                             <option value="download">Download Granules Only</option>
                         </select>
 
@@ -576,7 +577,7 @@ def _generate_events_html_map(
 
                         // Next Pass Payload
                         satellites: getMultiValues('sat-list', 'all'),
-                        lookback: document.getElementById('np_lookback').value,
+                        np_lookback: document.getElementById('np_lookback').value,
                         drcs: document.getElementById('drcs_enabled').value,
                         event_date: document.getElementById('drcs_event_date').value,
 
