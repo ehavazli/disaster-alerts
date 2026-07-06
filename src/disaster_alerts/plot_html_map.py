@@ -141,7 +141,8 @@ def _magnitude_to_radius(mag: float | None) -> float:
     """
     if mag is None:
         return 5.0
-    return max(4.0, min(22.0, 1.6 * (float(mag) - 1.0) ** 1.4))
+    base = max(0.0, float(mag) - 1.0)
+    return max(4.0, min(22.0, 1.6 * base**1.4))
 
 
 def _generate_events_html_map(
