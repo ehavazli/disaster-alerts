@@ -33,6 +33,7 @@ FAMILY_HUES = {
     "hurricane": 120 / 360,  # green
     "storm": 10 / 360,  # red/orange
     "thunderstorm": 270 / 360,  # purple
+    "earthquake": 45 / 360,  # amber
 }
 
 TRUSTED_URL_SUFFIXES = (
@@ -93,6 +94,8 @@ def _detect_family(event_type: str) -> str:
         return "flood"
     if "hurricane" in s:
         return "hurricane"
+    if "earthquake" in s:
+        return "earthquake"
     if "thunderstorm" in s:
         return "thunderstorm"
     # keep this order otherwise thunderstorm events
@@ -130,6 +133,18 @@ def _color_from_event_type(event_type: str) -> str:
     )
 
 
+def _magnitude_to_radius(mag: float | None) -> float:
+    """Map earthquake magnitude to a CircleMarker pixel radius.
+
+    Uses a super-linear curve so higher magnitudes stand out visually,
+    clamped so M<3 quakes stay visible and M>7.5 quakes don't dominate.
+    """
+    if mag is None:
+        return 5.0
+    base = max(0.0, float(mag) - 1.0)
+    return max(4.0, min(22.0, 1.6 * base**1.4))
+
+
 def _generate_events_html_map(
     settings: "Settings",
     events: dict[str, list["Event"]],
@@ -145,7 +160,7 @@ def _generate_events_html_map(
     from folium.features import GeoJson
     from folium.plugins import Draw
     from jinja2 import Template
-    from shapely.geometry import MultiPolygon
+    from shapely.geometry import MultiPolygon, Point
 
     class MapDashboardJS(MacroElement):
         def __init__(self):
@@ -643,9 +658,13 @@ def _generate_events_html_map(
     # Add grouped event layers
     for event_type, group_events in events.items():
         color = _color_from_event_type(event_type)
+        # Use circle for earthquakes, rectangle for other events
+        family = _detect_family(event_type)
+        border_radius = "50%" if family == "earthquake" else "0"
         color_box = (
             "<span style='display:inline-block; width:12px; height:12px; "
-            f"background:{color}; margin-right:6px; border:1px solid #333;'></span>"
+            f"background:{color}; margin-right:6px; border:1px solid #333; "
+            f"border-radius:{border_radius};'></span>"
         )
         legend_label = f"{color_box}{event_type} ({len(group_events)})"
         feature_group = folium.FeatureGroup(name=legend_label, show=True)
@@ -656,15 +675,45 @@ def _generate_events_html_map(
                 log.debug("Event %s has no AOI geometry", e.get("id"))
                 continue
             provider = str(e.get("provider", "")).upper()
+            props = e.get("properties") if isinstance(e.get("properties"), dict) else {}
+            mag = props.get("mag")
+            depth = props.get("depth_km")
+            popup_rows = [
+                ("Provider", provider),
+                ("Severity", e.get("severity")),
+                ("Description", e.get("title")),
+            ]
+            if mag is not None:
+                try:
+                    popup_rows.append(("Magnitude", f"M {float(mag):.1f}"))
+                except (TypeError, ValueError):
+                    pass
+            if depth is not None:
+                try:
+                    popup_rows.append(("Depth", f"{float(depth):.1f} km"))
+                except (TypeError, ValueError):
+                    pass
             popup_html = "<br>".join(
-                f"<b>{label}:</b> {value}"
-                for label, value in [
-                    ("Provider", provider),
-                    ("Severity", e.get("severity")),
-                    ("Description", e.get("title")),
-                ]
-                if value
+                f"<b>{label}:</b> {value}" for label, value in popup_rows if value
             )
+            if isinstance(geom, Point):
+                try:
+                    radius = _magnitude_to_radius(
+                        float(mag) if mag is not None else None
+                    )
+                except (TypeError, ValueError):
+                    radius = _magnitude_to_radius(None)
+                folium.CircleMarker(
+                    location=[geom.y, geom.x],
+                    radius=radius,
+                    color=color,
+                    weight=1.5,
+                    fill=True,
+                    fill_color=color,
+                    fill_opacity=0.55,
+                    popup=folium.Popup(popup_html, max_width=350),
+                ).add_to(feature_group)
+                continue
             if isinstance(geom, MultiPolygon):
                 geometries = geom.geoms
             else:
@@ -747,6 +796,8 @@ def _add_aoi_to_events(
       - event["aoi"]
       - event["centroid"]
     """
+    from shapely.geometry import Point
+
     out: List[Event] = []
     for e in events:
         props = e.get("properties")
@@ -755,6 +806,18 @@ def _add_aoi_to_events(
         event_type = str(props.get("event") or "")
         link = ""
         event_lower = event_type.lower()
+        if "earthquake" in event_lower:
+            geom = e.get("geometry")
+            coords = geom.get("coordinates") if isinstance(geom, dict) else None
+            if isinstance(coords, list) and len(coords) >= 2:
+                pt = Point(float(coords[0]), float(coords[1]))
+                e["aoi_polygon"] = pt
+                e["aoi"] = pt.bounds
+                e["centroid"] = pt
+            else:
+                log.debug("Earthquake %s missing point geometry", e.get("id"))
+            out.append(e)
+            continue
         if "flood" in event_lower:
             raw_link = e.get("link")
             link = str(raw_link).strip() if isinstance(raw_link, str) else ""

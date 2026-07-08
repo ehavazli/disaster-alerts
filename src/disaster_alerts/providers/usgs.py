@@ -111,6 +111,8 @@ def fetch_events(settings: Settings) -> List[Event]:
                     if depth_km is not None:
                         props.setdefault("depth_km", depth_km)
 
+            props.setdefault("event", "Earthquake")
+
             ev: Event = {
                 "id": fid or title,  # fallback to title if id somehow absent
                 "provider": "usgs",

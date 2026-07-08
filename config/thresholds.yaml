@@ -1,5 +1,5 @@
 earthquake:
-  min_magnitude: 6.0
+  min_magnitude: 4.0
   max_depth_km: 700
 
 weather:
