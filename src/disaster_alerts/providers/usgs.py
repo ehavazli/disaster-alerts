@@ -64,16 +64,16 @@ def fetch_events(settings: Settings) -> List[Event]:
     except Exception:
         pass
 
-    # last 60 minutes
+    # last 7 days
     end = _utc_now()
-    start = end - timedelta(minutes=60)
+    start = end - timedelta(days=7)
 
     params = {
         "format": "geojson",
         "starttime": start.strftime("%Y-%m-%dT%H:%M:%S"),
         "endtime": end.strftime("%Y-%m-%dT%H:%M:%S"),
         "minmagnitude": f"{minmag:.1f}",
-        "limit": "200",
+        "limit": "2000",
         # You could add "orderby": "time" if needed; default is time desc.
     }
 
