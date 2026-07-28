@@ -25,7 +25,8 @@ def _as_point_from_geometry(geom: Optional[Dict[str, Any]]) -> Optional[Coord]:
     """
     Extract a representative point (lon, lat) from a GeoJSON geometry.
     - If Point: return coords.
-    - If Polygon/MultiPolygon: return the first vertex of the outer ring (fast + deterministic).
+    - If Polygon/MultiPolygon: return first vertex of outer ring
+      (fast + deterministic).
     - Otherwise: return None (caller may skip AOI filtering for this event).
     """
     if not geom or not isinstance(geom, dict):
@@ -132,7 +133,8 @@ def _aoi_contains(aoi: Dict[str, Any], pt: Coord) -> bool:
 
 # We convert provider-specific severities to a comparable rank.
 # NWS typically: "Minor" | "Moderate" | "Severe" | "Extreme"
-# USGS (derived here from magnitude buckets): "Minor" | "Light" | "Moderate" | "Strong" | "Major" | "Great"
+# USGS (derived from magnitude buckets):
+#   "Minor" | "Light" | "Moderate" | "Strong" | "Major" | "Great"
 _SEVERITY_RANK = {
     # NWS-ish
     "unknown": 0,
@@ -175,7 +177,8 @@ def _passes_global_severity(e: Event, thresholds: Thresholds) -> bool:
 def _as_earthquake_values(e: Event) -> Dict[str, Optional[float]]:
     """
     Extract magnitude & depth_km from a USGS-like earthquake event.
-    USGS GeoJSON keys: feature.properties.mag, feature.geometry.coordinates[2] (depth in km)
+    USGS GeoJSON keys: feature.properties.mag,
+    feature.geometry.coordinates[2] (depth in km).
     We also check common alternates like 'magnitude', 'depth'.
     """
     props = e.get("properties", {}) or {}

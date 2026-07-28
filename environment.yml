@@ -1,8 +1,6 @@
-# environment.yml
 name: disaster-alerts
 channels:
   - conda-forge
-channel_priority: strict
 dependencies:
   - python>=3.12
   - flask
@@ -36,6 +34,6 @@ dependencies:
   - click
   - pip:
       - yagmail
-      - git+https://github.com/OPERA-Cal-Val/next_pass.git@main
-      - opera-utils==0.25.3
+      - next-pass
+      - opera-utils
       - git+https://github.com/OPERA-Cal-Val/disasters.git@main

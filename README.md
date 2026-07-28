@@ -1,5 +1,9 @@
 # disaster-alerts
 
+![Python](https://img.shields.io/badge/python-%3E%3D3.12-blue)
+![Tests](https://img.shields.io/badge/tests-pytest-green)
+![License](https://img.shields.io/badge/license-Apache%202.0-orange)
+
 Cron-friendly email alerts for significant **USGS earthquakes** and **NWS weather events**.
 Runs on a schedule, pulls fresh events, filters by your thresholds/AOI, and emails concise HTML + plain-text digests.
 
@@ -37,7 +41,14 @@ disaster-alerts/
 
 ## Quick start
 
-### 1. Create a virtual environment
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/ehavazli/disaster-alerts.git
+cd disaster-alerts
+```
+
+### 2. Create a virtual environment
 
 Using Conda (recommended):
 
@@ -46,13 +57,21 @@ conda env create -f environment.yml
 conda activate disaster-alerts
 ```
 
-Then you can make an editable install using:
+Then make an editable install:
 
 ```bash
 pip install -e .
 ```
 
-### 2. Configure SMTP & secrets
+### 3. Set up pre-commit hooks
+
+```bash
+pre-commit install
+```
+
+This runs linting and formatting checks before each commit.
+
+### 4. Configure SMTP & secrets
 
 Copy `.env.example` to `.env` and set your SMTP credentials:
 
@@ -69,7 +88,7 @@ YAGMAIL_APP_PASSWORD=app_password_or_token
 
 > For Gmail, create an **app password** and use that instead of your regular password.
 
-### 3. Configure providers, thresholds, and recipients
+### 5. Configure providers, thresholds, and recipients
 
 Edit the YAML files under `config/`:
 
@@ -116,6 +135,7 @@ Tips:
 ## Serve the HTML map in a web browser
 
 To display the HTML events map in a web browser from a disaster-alerts cron job using Flask:
+
 Run Flask in the background:
 
 ```bash
@@ -134,6 +154,15 @@ You can then access the HTML event map locally at http://localhost:8000 after SS
 ssh -L 8000:localhost:8000 username@server/domain_name
 ```
 
+### Web app endpoints
+
+- `GET /` - Main page showing HTML event map
+- `GET /test_ping` - Health check endpoint
+- `POST /process_bbox` - Process events for a bounding box
+- `GET /processing_status` - Check processing job status
+- `GET /maps/<run_id>/<filename>` - Retrieve generated map files
+- `GET /show_maps` - List all available maps
+
 ---
 
 
@@ -142,6 +171,8 @@ ssh -L 8000:localhost:8000 username@server/domain_name
 
 ### USGS
 - Typical filters: `min_magnitude`, `max_depth_km`
+- **Recent change**: Earthquake reporting window extended to 1 week to keep events visible longer in HTML map
+- **Note**: Magnitude threshold adjustable in `thresholds.yaml`
 
 ### NWS
 - Typical filters: allowed product types (e.g., *Severe Thunderstorm Warning*, *Flash Flood Warning*, etc. see [list](https://github.com/ehavazli/disaster-alerts/blob/main/config/nws_events_list.json)), `aoi`
@@ -171,6 +202,15 @@ Editable install:
 
 ```bash
 pip install -e .[dev]
+```
+
+### Running tests
+
+```bash
+pytest                  # Run all tests
+pytest tests/test_providers.py  # Run specific test file
+pytest -v              # Verbose output
+pytest --cov=src       # With coverage report
 ```
 
 Where to add things:
@@ -228,6 +268,19 @@ Where to add things:
   - Ensure UTF-8 when composing and sending
 - **Tests fail locally but pass in CI**:
   - Pin package versions via `environment.yml` or `pyproject.toml`
+- **Web app won't start**:
+  - Check port 8000 not already in use: `lsof -i :8000`
+  - Verify Flask installed: `pip list | grep -i flask`
+  - Check logs at `logs/flask.log`
+  - If multiple processes running, kill all and restart:
+    ```bash
+    pkill -f 'web/app.py'
+    nohup python web/app.py > logs/flask.log 2>&1 &
+    ```
+- **Dependency conflicts after `conda env update`**:
+  - Most packages unpinned - may get breaking changes
+  - Pin critical versions in `environment.yml` if needed
+  - Use `conda env export > environment.lock.yml` to capture working state
 
 ---
 

@@ -153,7 +153,9 @@ class AppConfig(BaseModel):
     log_level: str = Field(default="INFO", description="Python logging level")
     display_timezone: Optional[str] = Field(
         default=None,
-        description="IANA tz name used when rendering email times (e.g., 'America/Los_Angeles')",
+        description=(
+            "IANA tz name used when rendering email times (e.g., 'America/Los_Angeles')"
+        ),
     )
     aoi: Optional[Dict[str, Any]] = Field(
         default=None, description="GeoJSON Polygon/MultiPolygon"
@@ -256,7 +258,10 @@ class Recipients(BaseModel):
                         {
                             "type": "value_error",
                             "loc": (key,),
-                            "msg": "each recipients list must be a list of strings (emails)",
+                            "msg": (
+                                "each recipients list must be a list of strings"
+                                " (emails)"
+                            ),
                             "input": val,
                         }
                     ],

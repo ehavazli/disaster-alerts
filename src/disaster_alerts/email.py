@@ -327,7 +327,10 @@ def _format_text_lines(events: Iterable[Event], settings: Settings) -> List[str]
 
             head = f"{idx}) {title}"
             meta = " — ".join(part for part in (office or None, area or None) if part)
-            when = f"When: {_fmt_local(onset, tz)} → {_fmt_local(expires, tz)}  {_time_left(expires, now_local)}"
+            when = (
+                f"When: {_fmt_local(onset, tz)} → {_fmt_local(expires, tz)} "
+                f" {_time_left(expires, now_local)}"
+            )
             sevline = f"Severity: {sev} • Certainty: {cert} • Urgency: {urg}"
             url = f"URL: {link}"
 
@@ -353,7 +356,10 @@ def _format_text_lines(events: Iterable[Event], settings: Settings) -> List[str]
 
 
 def _format_html_rows(events: Iterable[Event]) -> str:
-    """HTML table rows; add a detail row for USGS (origin/mag/depth/alert/tsunami) and WKT row."""
+    """
+    HTML table rows; add detail row for USGS (origin/mag/depth/alert/tsunami)
+    and WKT row.
+    """
     rows: List[str] = []
     for ev in events:
         title = html.escape(str(ev.get("title") or "").strip() or "(untitled)")
@@ -386,9 +392,12 @@ def _format_html_rows(events: Iterable[Event]) -> str:
             tsunami = "Yes" if props.get("tsunami") in (1, "1", True) else "No"
 
             detail_parts: List[str] = []
-            detail_parts.append(
-                f"Origin: {html.escape(origin.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')) if origin else '—'}"
+            origin_str = (
+                origin.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                if origin
+                else "—"
             )
+            detail_parts.append(f"Origin: {html.escape(origin_str)}")
             detail_parts.append(
                 f"Magnitude: {mag:.1f}" if mag is not None else "Magnitude: —"
             )
@@ -399,7 +408,8 @@ def _format_html_rows(events: Iterable[Event]) -> str:
             detail_parts.append(f"Tsunami: {tsunami}")
 
             rows.append(
-                "<tr><td colspan='6' style='font-family:system-ui,Segoe UI,Arial;font-size:12px;'>"
+                "<tr><td colspan='6' style='font-family:system-ui,Segoe"
+                " UI,Arial;font-size:12px;'>"
                 + " • ".join(detail_parts)
                 + "</td></tr>"
             )
@@ -407,12 +417,12 @@ def _format_html_rows(events: Iterable[Event]) -> str:
         wkt = _wkt_for_event(ev)
         if wkt:
             trimmed = (wkt[:600] + "…") if len(wkt) > 600 else wkt
+            style = (
+                "font-family:monospace;font-size:12px;white-space:nowrap;overflow:auto;"
+            )
             rows.append(
-                "<tr>"
-                "<td colspan='6' style='font-family:monospace;font-size:12px;white-space:nowrap;overflow:auto;'>"
-                f"<strong>WKT:</strong> {html.escape(trimmed)}"
-                "</td>"
-                "</tr>"
+                f"<tr><td colspan='6' style='{style}'>"
+                f"<strong>WKT:</strong> {html.escape(trimmed)}</td></tr>"
             )
     return "\n".join(rows)
 
@@ -453,7 +463,8 @@ def _build_bodies(
     # html table
     rows_html = _format_html_rows(events)
     table = (
-        "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;'>"
+        "<table border='1' cellpadding='6' cellspacing='0'"
+        " style='border-collapse:collapse;'>"
         "<thead><tr>"
         "<th>Provider</th><th>Title</th><th>Severity</th><th>Updated</th><th>Link</th><th>ID</th>"
         "</tr></thead>"

@@ -1,6 +1,13 @@
 # tests/test_email.py
 from disaster_alerts.email import build_message
-from disaster_alerts.settings import Settings, Thresholds, AppConfig, ProvidersConfig, Paths, EmailConfig
+from disaster_alerts.settings import (
+    AppConfig,
+    EmailConfig,
+    Paths,
+    ProvidersConfig,
+    Settings,
+    Thresholds,
+)
 
 
 class DummySettings(Settings):
@@ -13,8 +20,16 @@ class DummySettings(Settings):
             logs_dir=".",
             state_file="./data/state.json",
         )
-        app = AppConfig(log_level="INFO", aoi=None, providers=ProvidersConfig(nws=True, usgs=True))
-        return cls(paths=root, app=app, thresholds=Thresholds(), recipients={}, email=EmailConfig(user="u@e.com", app_password="x"))
+        app = AppConfig(
+            log_level="INFO", aoi=None, providers=ProvidersConfig(nws=True, usgs=True)
+        )
+        return cls(
+            paths=root,
+            app=app,
+            thresholds=Thresholds(),
+            recipients={},
+            email=EmailConfig(user="u@e.com", app_password="x"),
+        )
 
 
 def test_build_message_shapes_html_and_text():

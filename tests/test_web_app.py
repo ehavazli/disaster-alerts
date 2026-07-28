@@ -95,9 +95,7 @@ def test_show_maps_and_map_assets_use_run_specific_output_folder(client, tmp_pat
 
     (folder_a / "run_output.txt").write_text("A log", encoding="utf-8")
     (folder_b / "run_output.txt").write_text("B log", encoding="utf-8")
-    (folder_a / "satellite_overpasses_map.html").write_text(
-        "sat-a", encoding="utf-8"
-    )
+    (folder_a / "satellite_overpasses_map.html").write_text("sat-a", encoding="utf-8")
     (folder_b / "opera_products_map.html").write_text("opera-b", encoding="utf-8")
 
     web_app._update_run_state(run_id_a, running=False, latest_folder=str(folder_a))
@@ -112,10 +110,10 @@ def test_show_maps_and_map_assets_use_run_specific_output_folder(client, tmp_pat
     body_b = show_b.get_data(as_text=True)
 
     assert show_a.status_code == 200
-    assert f'/maps/{run_id_a}/satellite_overpasses_map.html' in body_a
+    assert f"/maps/{run_id_a}/satellite_overpasses_map.html" in body_a
     assert "/opera_products_map.html" not in body_a
     assert show_b.status_code == 200
-    assert f'/maps/{run_id_b}/opera_products_map.html' in body_b
+    assert f"/maps/{run_id_b}/opera_products_map.html" in body_b
     assert "/satellite_overpasses_map.html" not in body_b
     assert map_a.get_data(as_text=True) == "sat-a"
     assert map_b.get_data(as_text=True) == "opera-b"

@@ -25,12 +25,18 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument(
         "--config-dir",
         type=Path,
-        help="Override config directory (default: ./config or $DISASTER_ALERTS_CONFIG_DIR)",
+        help=(
+            "Override config directory (default: ./config or"
+            " $DISASTER_ALERTS_CONFIG_DIR)"
+        ),
     )
     p.add_argument(
         "--root",
         type=Path,
-        help="Override repo root (default: inferred from package or $DISASTER_ALERTS_ROOT)",
+        help=(
+            "Override repo root (default: inferred from package or"
+            " $DISASTER_ALERTS_ROOT)"
+        ),
     )
     p.add_argument(
         "--dotenv",
@@ -149,7 +155,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         email_mod.send = _noop_send  # type: ignore[assignment]
         try:
-            count = pipeline.run(settings)
+            pipeline.run(settings)
         except Exception as e:
             email_mod.send = real_send  # restore before exiting
             print(f"[runtime] {e}", file=sys.stderr)

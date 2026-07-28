@@ -119,7 +119,7 @@ def stub_yagmail(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("disaster_alerts.email.yagmail.SMTP", DummySMTP, raising=False)
 
 
-# --------------------------- Helpers to monkeypatch providers ---------------------------
+# ------------------- Helpers to monkeypatch providers -------------------
 
 
 @pytest.fixture

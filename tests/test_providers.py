@@ -1,15 +1,21 @@
 # tests/test_providers.py
-from datetime import datetime, timezone, timedelta
-
-import pytest
+from datetime import datetime, timezone
 
 from disaster_alerts.providers import nws as nws_mod
 from disaster_alerts.providers import usgs as usgs_mod
-from disaster_alerts.settings import Settings, Thresholds, AppConfig, ProvidersConfig, Paths, EmailConfig
+from disaster_alerts.settings import (
+    AppConfig,
+    EmailConfig,
+    Paths,
+    ProvidersConfig,
+    Settings,
+    Thresholds,
+)
 
 
 class DummySettings(Settings):
     """Lightweight Settings for provider unit tests without reading files."""
+
     @classmethod
     def minimal(cls) -> "Settings":
         root = Paths(
@@ -19,8 +25,16 @@ class DummySettings(Settings):
             logs_dir=".",
             state_file="./data/state.json",
         )
-        app = AppConfig(log_level="INFO", aoi=None, providers=ProvidersConfig(nws=True, usgs=True))
-        return cls(paths=root, app=app, thresholds=Thresholds(), recipients={}, email=EmailConfig())
+        app = AppConfig(
+            log_level="INFO", aoi=None, providers=ProvidersConfig(nws=True, usgs=True)
+        )
+        return cls(
+            paths=root,
+            app=app,
+            thresholds=Thresholds(),
+            recipients={},
+            email=EmailConfig(),
+        )
 
 
 def test_nws_fetch_events_monkeypatched(monkeypatch):
@@ -30,7 +44,10 @@ def test_nws_fetch_events_monkeypatched(monkeypatch):
         "features": [
             {
                 "id": "https://api.weather.gov/alerts/123",
-                "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+                },
                 "properties": {
                     "id": "NWS-123",
                     "event": "Severe Thunderstorm Warning",
@@ -43,7 +60,9 @@ def test_nws_fetch_events_monkeypatched(monkeypatch):
         ],
     }
 
-    def fake_get_json(url, params=None, headers=None, timeout=15, retries=2, backoff=1.5):
+    def fake_get_json(
+        url, params=None, headers=None, timeout=15, retries=2, backoff=1.5
+    ):
         return sample
 
     monkeypatch.setattr(nws_mod, "get_json", fake_get_json)
@@ -82,7 +101,9 @@ def test_usgs_fetch_events_monkeypatched(monkeypatch):
         ],
     }
 
-    def fake_get_json(url, params=None, headers=None, timeout=15, retries=2, backoff=1.5):
+    def fake_get_json(
+        url, params=None, headers=None, timeout=15, retries=2, backoff=1.5
+    ):
         # Assert we honor min magnitude in params
         assert "minmagnitude" in params
         return sample
@@ -96,6 +117,13 @@ def test_usgs_fetch_events_monkeypatched(monkeypatch):
     e = events[0]
     assert e["provider"] == "usgs"
     assert e["id"] == "usgs123"
-    assert e["severity"] in {"Moderate", "Strong", "Major", "Great", "Light", "Minor"}  # bucketed
+    assert e["severity"] in {
+        "Moderate",
+        "Strong",
+        "Major",
+        "Great",
+        "Light",
+        "Minor",
+    }  # bucketed
     assert "depth_km" in e["properties"]
     assert e["properties"]["depth_km"] == 8.0
