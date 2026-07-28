@@ -749,8 +749,14 @@ def show_maps():
                   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <script>
-                var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png');
-                var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}');
+                var streetMap = L.tileLayer(
+                    'https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png',
+                    {{
+                        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+                        maxZoom: 20
+                    }}
+                );
+                var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{x}}/{{y}}.png');
 
                 var map = L.map('geotiff-map', {{
                     center: [0, 0],
@@ -758,7 +764,7 @@ def show_maps():
                     layers: [satellite]
                 }});
 
-                var baseMaps = {{ "Satellite": satellite, "OpenStreetMap": osm }};
+                var baseMaps = {{ "Satellite": satellite, "Street Map": streetMap }};
                 var overlayMaps = {{}};
 
                 var layerControl = L.control.layers(

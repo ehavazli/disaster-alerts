@@ -653,7 +653,15 @@ def _generate_events_html_map(
 
     # Add base layers
     folium.TileLayer("Esri.WorldImagery", name="Satellite").add_to(map_object)
-    folium.TileLayer("OpenStreetMap", name="OSM").add_to(map_object)
+    folium.TileLayer(
+        tiles="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+        attr=(
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            ' contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        ),
+        name="Street Map",
+        max_zoom=20,
+    ).add_to(map_object)
 
     # Add grouped event layers
     for event_type, group_events in events.items():
