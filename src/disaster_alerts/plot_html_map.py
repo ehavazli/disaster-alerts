@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import colorsys
 import hashlib
+import html
 import ipaddress
 import json
 import logging
@@ -691,7 +692,7 @@ def _generate_events_html_map(
             if family == "earthquake":
                 # Use the complete place string from properties
                 place = props.get("place")
-                location_str = str(place) if place else ""
+                location_str = html.escape(str(place)) if place else ""
                 popup_rows = [
                     ("Provider", provider),
                     ("Severity", e.get("severity")),
@@ -727,7 +728,7 @@ def _generate_events_html_map(
                         if "," in place_str
                         else place_str
                     )
-                    header_parts.append(region)
+                    header_parts.append(html.escape(region))
                 if mag is not None:
                     try:
                         header_parts.append(f"M {float(mag):.1f}")
@@ -740,7 +741,7 @@ def _generate_events_html_map(
                             float(time_ms) / 1000, tz=timezone.utc
                         )
                         header_parts.append(dt.strftime("%Y-%m-%d %H:%M UTC"))
-                    except (TypeError, ValueError, OSError):
+                    except (TypeError, ValueError, OSError, OverflowError):
                         pass
                 if header_parts:
                     header_html = f"<b>{' &middot; '.join(header_parts)}</b>"
