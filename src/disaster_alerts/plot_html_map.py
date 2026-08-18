@@ -12,6 +12,7 @@ import ipaddress
 import json
 import logging
 import socket
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 from urllib.parse import urlparse
@@ -686,11 +687,22 @@ def _generate_events_html_map(
             props = e.get("properties") if isinstance(e.get("properties"), dict) else {}
             mag = props.get("mag")
             depth = props.get("depth_km")
-            popup_rows = [
-                ("Provider", provider),
-                ("Severity", e.get("severity")),
-                ("Description", e.get("title")),
-            ]
+            # Extract location for earthquake events
+            if family == "earthquake":
+                # Use the complete place string from properties
+                place = props.get("place")
+                location_str = str(place) if place else ""
+                popup_rows = [
+                    ("Provider", provider),
+                    ("Severity", e.get("severity")),
+                    ("Location", location_str),
+                ]
+            else:
+                popup_rows = [
+                    ("Provider", provider),
+                    ("Severity", e.get("severity")),
+                    ("Description", e.get("title")),
+                ]
             if mag is not None:
                 try:
                     popup_rows.append(("Magnitude", f"M {float(mag):.1f}"))
@@ -704,6 +716,37 @@ def _generate_events_html_map(
             popup_html = "<br>".join(
                 f"<b>{label}:</b> {value}" for label, value in popup_rows if value
             )
+            if family == "earthquake":
+                header_parts: list[str] = []
+                # Extract region (last part after comma) from place
+                place = props.get("place")
+                if place:
+                    place_str = str(place)
+                    region = (
+                        place_str.split(",")[-1].strip()
+                        if "," in place_str
+                        else place_str
+                    )
+                    header_parts.append(region)
+                if mag is not None:
+                    try:
+                        header_parts.append(f"M {float(mag):.1f}")
+                    except (TypeError, ValueError):
+                        pass
+                time_ms = props.get("time")
+                if time_ms is not None:
+                    try:
+                        dt = datetime.fromtimestamp(
+                            float(time_ms) / 1000, tz=timezone.utc
+                        )
+                        header_parts.append(dt.strftime("%Y-%m-%d %H:%M UTC"))
+                    except (TypeError, ValueError, OSError):
+                        pass
+                if header_parts:
+                    header_html = f"<b>{' &middot; '.join(header_parts)}</b>"
+                    popup_html = (
+                        f"{header_html}<br>{popup_html}" if popup_html else header_html
+                    )
             if isinstance(geom, Point):
                 try:
                     radius = _magnitude_to_radius(
