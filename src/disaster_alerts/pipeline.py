@@ -233,11 +233,10 @@ def run(settings: Settings) -> int:
       1) fetch from enabled providers
       2) filter by rules (global severity, provider thresholds, AOI)
       3) generate html map of events if enabled (before dedup to show all fetched events)
-      else if settings.app.no_html
-      3) dedup against state (non-mutating)
-      4) group by routing key (force/merge/drop)
-      5) email each group
-      6) persist state with events that were actually emailed
+      4) dedup against state (non-mutating)
+      5) group by routing key (force/merge/drop)
+      6) email each group
+      7) persist state with events that were actually emailed
     """
     _setup_logging(settings.app.log_level)
 
@@ -253,48 +252,48 @@ def run(settings: Settings) -> int:
         log.info("All events filtered out by rules.")
         return 0
 
-    # 3) generate html map of events if enabled
-    if not (settings.app.no_html):
+    # 3) generate html map of events if enabled (before dedup to show all fetched events)
+    if not settings.app.no_html:
         try:
-            events = _plot_html_map._add_aoi_to_events(events, settings.paths.data_dir)
-            grouped_for_map = _group_by_event_type(events, settings)
+            events_for_map = _plot_html_map._add_aoi_to_events(
+                events, settings.paths.data_dir
+            )
+            grouped_for_map = _group_by_event_type(events_for_map, settings)
             _plot_html_map._generate_events_html_map(
                 settings, grouped_for_map, settings.paths.data_dir
             )
         except Exception as e:
             log.error("Failed to generate events HTML map: %s", e)
-    else:
-        # 3) dedup (do not update state yet—only after successful sends)
-        state = _State.load(settings.paths.state_file)
-        events = _only_new(events, state)
-        if not events:
-            log.info("No new events after deduplication.")
-            return 0
 
-        # 4) route
-        grouped = _group_by_routing_key(events, settings)
-        if not grouped:
-            log.info("No routable groups after routing rules.")
-            return 0
+    # 4) dedup (do not update state yet—only after successful sends)
+    state = _State.load(settings.paths.state_file)
+    events = _only_new(events, state)
+    if not events:
+        log.info("No new events after deduplication.")
+        return 0
 
-        # 5) email
-        try:
-            groups_sent, events_notified, sent_events = _dispatch_emails(
-                settings, grouped
-            )
-        except RuntimeError as e:
-            # Likely missing email credentials; surface clearly
-            log.error("Notification failed: %s", e)
-            raise
+    # 5) route
+    grouped = _group_by_routing_key(events, settings)
+    if not grouped:
+        log.info("No routable groups after routing rules.")
+        return 0
 
-        # 6) persist state (only for events we actually attempted to send)
-        if sent_events:
-            state.update_with(sent_events)
-            state.save()
+    # 6) email
+    try:
+        groups_sent, events_notified, sent_events = _dispatch_emails(settings, grouped)
+    except RuntimeError as e:
+        # Likely missing email credentials; surface clearly
+        log.error("Notification failed: %s", e)
+        raise
 
-        log.info(
-            "Pipeline completed: %d group(s) emailed, %d event(s) notified.",
-            groups_sent,
-            events_notified,
-        )
-        return events_notified
+    # 7) persist state (only for events we actually attempted to send)
+    if sent_events:
+        state.update_with(sent_events)
+        state.save()
+
+    log.info(
+        "Pipeline completed: %d group(s) emailed, %d event(s) notified.",
+        groups_sent,
+        events_notified,
+    )
+    return events_notified
