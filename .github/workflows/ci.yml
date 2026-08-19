@@ -35,5 +35,7 @@ jobs:
           create-args: python=${{ matrix.python-version }}
           cache-environment: true
           cache-downloads: true
+      - name: Install package
+        run: micromamba run -n disaster-alerts pip install -e .
       - name: Run tests
         run: micromamba run -n disaster-alerts pytest
