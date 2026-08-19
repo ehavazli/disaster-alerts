@@ -47,7 +47,7 @@ def test_process_bbox_returns_unique_run_ids_per_request(monkeypatch, client):
         "lat_max": 2,
         "lon_min": 3,
         "lon_max": 4,
-        "search_type": "both",
+        "search_type": "overpasses",
     }
 
     response_a = client.post("/process_bbox", json=payload)
@@ -59,14 +59,19 @@ def test_process_bbox_returns_unique_run_ids_per_request(monkeypatch, client):
     run_id_b = response_b.get_json()["run_id"]
 
     assert run_id_a != run_id_b
-    assert started_threads[0][0] is web_app.run_next_pass
+    assert started_threads[0][0] is web_app.run_overpasses_only
     assert started_threads[0][1] == (run_id_a, payload)
+    assert started_threads[1][0] is web_app.run_opera_search
     assert started_threads[1][1] == (
         run_id_b,
-        {**payload, "search_type": "opera_search"},
+        {
+            **payload,
+            "search_type": "opera_search",
+            "functionality": "opera_search",
+        },
     )
-    assert web_app._get_run_state(run_id_a)["search_type"] == "both"
-    assert web_app._get_run_state(run_id_b)["search_type"] == "opera_search"
+    assert web_app._get_run_state(run_id_a)["search_type"] == ["overpasses"]
+    assert web_app._get_run_state(run_id_b)["search_type"] == ["opera_search"]
 
 
 def test_processing_status_is_scoped_to_run_id(client):
