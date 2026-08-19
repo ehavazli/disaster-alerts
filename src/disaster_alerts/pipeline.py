@@ -256,7 +256,7 @@ def run(settings: Settings) -> int:
     if not settings.app.no_html:
         try:
             events_for_map = _plot_html_map._add_aoi_to_events(
-                events, settings.paths.data_dir
+                [dict(e) for e in events], settings.paths.data_dir
             )
             grouped_for_map = _group_by_event_type(events_for_map, settings)
             _plot_html_map._generate_events_html_map(
