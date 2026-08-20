@@ -186,17 +186,19 @@ def _recipients_for_key(settings: Settings, key: str) -> List[str]:
 
 
 def _dispatch_emails(
-    settings: Settings, grouped: Dict[str, List[Event]]
-) -> Tuple[int, int, List[Event]]:
+    settings: Settings, grouped: Dict[str, List[Event]], sent_events: List[Event]
+) -> Tuple[int, int]:
     """
     Send one email per group (routing key).
-    Returns (groups_sent, events_notified, sent_events_flat_list).
+
+    Appends each successfully-sent group's events to `sent_events` as it
+    completes, so the caller retains partial progress if a later group
+    raises. Returns (groups_sent, events_notified).
     """
     settings.require_email()
 
     groups_sent = 0
     events_notified = 0
-    sent_events: List[Event] = []
 
     for key, evs in grouped.items():
         if not evs:
@@ -219,7 +221,7 @@ def _dispatch_emails(
             key,
         )
 
-    return groups_sent, events_notified, sent_events
+    return groups_sent, events_notified
 
 
 # ------------------------ public entrypoint ------------------------
@@ -279,17 +281,18 @@ def run(settings: Settings) -> int:
         return 0
 
     # 6) email
+    sent_events: List[Event] = []
     try:
-        groups_sent, events_notified, sent_events = _dispatch_emails(settings, grouped)
+        groups_sent, events_notified = _dispatch_emails(settings, grouped, sent_events)
     except RuntimeError as e:
         # Likely missing email credentials; surface clearly
         log.error("Notification failed: %s", e)
         raise
-
-    # 7) persist state (only for events we actually attempted to send)
-    if sent_events:
-        state.update_with(sent_events)
-        state.save()
+    finally:
+        # 7) persist state for whatever was actually sent, even on failure
+        if sent_events:
+            state.update_with(sent_events)
+            state.save()
 
     log.info(
         "Pipeline completed: %d group(s) emailed, %d event(s) notified.",
