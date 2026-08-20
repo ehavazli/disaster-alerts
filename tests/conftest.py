@@ -82,6 +82,9 @@ def block_network(monkeypatch: pytest.MonkeyPatch):
         )
 
     monkeypatch.setattr(requests, "get", _nope)
+    # providers/common.py issues requests via a module-level requests.Session(),
+    # which requests.get patching above does not cover.
+    monkeypatch.setattr(requests.Session, "get", _nope)
 
 
 @pytest.fixture(autouse=True)
@@ -116,7 +119,9 @@ def stub_yagmail(monkeypatch: pytest.MonkeyPatch):
         def send(self, *a, **kw):
             return None
 
-    monkeypatch.setattr("disaster_alerts.email.yagmail.SMTP", DummySMTP, raising=False)
+    import yagmail
+
+    monkeypatch.setattr(yagmail, "SMTP", DummySMTP)
 
 
 # ------------------- Helpers to monkeypatch providers -------------------

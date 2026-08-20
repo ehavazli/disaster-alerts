@@ -15,10 +15,12 @@ log = logging.getLogger(__name__)
 Event = Dict[str, Any]
 ProviderFunc = Callable[[Settings], List[Event]]
 
-# Canonical registry of supported providers.
-REGISTRY: Dict[str, ProviderFunc] = {
-    "nws": _nws.fetch_events,
-    "usgs": _usgs.fetch_events,
+# Canonical registry of supported providers, keyed to their module (not a
+# direct function reference) so monkeypatching a module's fetch_events at
+# test/runtime is honored via live attribute lookup in fetch_from_enabled.
+REGISTRY: Dict[str, Any] = {
+    "nws": _nws,
+    "usgs": _usgs,
 }
 
 __all__ = ["Event", "ProviderFunc", "REGISTRY", "fetch_from_enabled"]
@@ -52,7 +54,8 @@ def fetch_from_enabled(settings: Settings) -> List[Event]:
         return results
 
     for key in keys:
-        fn = REGISTRY.get(key)
+        module = REGISTRY.get(key)
+        fn = getattr(module, "fetch_events", None) if module is not None else None
         if fn is None:
             log.warning("Provider '%s' is not registered; skipping", key)
             continue
